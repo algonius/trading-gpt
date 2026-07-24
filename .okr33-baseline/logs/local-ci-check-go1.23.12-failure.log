@@ -1,0 +1,25 @@
+== local CI-equivalent check ==
+Date: 2026-07-25 SGT / 2026-07-24 UTC
+Path: /Users/sulabs_001/workspace/trading-gpt
+Branch: codex/okr33-kr3-baseline-ci
+Command:
+
+env GO_BIN=/Users/sulabs_001/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.23.12.darwin-arm64/bin/go \
+  CACHE_ROOT=/Users/sulabs_001/workspace/trading-gpt/.okr33-baseline/cache \
+  RUN_LABEL=local-ci-check \
+  scripts/okr33-baseline.sh
+
+Output:
+
+credential vars absent
+go version go1.23.12 darwin/arm64
+go1.23.12
+local
+/Users/sulabs_001/workspace/trading-gpt/.okr33-baseline/cache/local-ci-check/gomod
+/Users/sulabs_001/workspace/trading-gpt/.okr33-baseline/cache/local-ci-check/gocache
+darwin
+arm64
+1
+go: cloud.google.com/go@v0.115.0: Get "https://proxy.golang.org/cloud.google.com/go/@v/v0.115.0.mod": tls: received record with version 5117 when expecting version 303
+
+Result: BLOCKED by Go module provider/network TLS failure before build or unit tests started.

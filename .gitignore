@@ -34,3 +34,6 @@ CLAUDE.md
 # Codex
 .codex/
 AGENTS.md
+
+# OKR-33 baseline artifacts
+.okr33-baseline/cache/

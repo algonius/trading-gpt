@@ -1,0 +1,54 @@
+== run1 start UTC ==
+2026-07-24T16:36:14Z
+== checkout ==
+f21cf608c4fbe3c470f383988f19fde6339934ee
+## main...origin/main
+?? .okr33-baseline/
+ a45ad83e41f661907dfe4b40a43a99a1e84f24f3 libs/bbgo (remotes/origin/issue73/okex-reduceonly)
+ 5d1e56ed0023ca03fe793409b99687bccda41adb libs/chatgpt (v0.3.4)
+== credential env check ==
+credential vars absent
+== environment ==
+go version go1.23.12 darwin/arm64
+Darwin sulabs.local 25.5.0 Darwin Kernel Version 25.5.0: Tue Jun  9 22:26:22 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T8132 arm64
+go1.23.12
+local
+/Users/sulabs_001/workspace/trading-gpt/.okr33-baseline/cache/run1/gomod
+/Users/sulabs_001/workspace/trading-gpt/.okr33-baseline/cache/run1/gocache
+darwin
+arm64
+1
+== command: go mod download ==
+== command: make build ==
+rm -rf build/*
+CGO_ENABLED=0 go build -o ./build/bbgo ./main.go
+== command: make unit-test ==
+go test ./pkg/...
+?   	github.com/yubing744/trading-gpt/pkg	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/agents	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/agents/trading	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/chat	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/config	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/env/coze	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/env/exchange	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/env/fng	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/env/twitterapi	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/llms	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/llms/anthropic	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/llms/googleai	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/llms/openai	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/prompt	[no test files]
+ok  	github.com/yubing744/trading-gpt/pkg/agents/keeper	1.864s
+ok  	github.com/yubing744/trading-gpt/pkg/apis/alternative	3.164s
+ok  	github.com/yubing744/trading-gpt/pkg/apis/coze	2.572s
+ok  	github.com/yubing744/trading-gpt/pkg/apis/twitterapi	1.006s
+ok  	github.com/yubing744/trading-gpt/pkg/chat/feishu	2.306s
+ok  	github.com/yubing744/trading-gpt/pkg/env	2.019s
+ok  	github.com/yubing744/trading-gpt/pkg/memory	2.233s
+ok  	github.com/yubing744/trading-gpt/pkg/notify/feishu	2.188s [no tests to run]
+ok  	github.com/yubing744/trading-gpt/pkg/notify/feishu-hook	2.611s [no tests to run]
+ok  	github.com/yubing744/trading-gpt/pkg/types	3.034s
+ok  	github.com/yubing744/trading-gpt/pkg/utils	2.827s
+ok  	github.com/yubing744/trading-gpt/pkg/utils/xtemplate	3.125s
+== run1 end UTC ==
+2026-07-24T16:39:42Z
