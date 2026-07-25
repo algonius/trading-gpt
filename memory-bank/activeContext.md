@@ -1,6 +1,9 @@
 # Active Context: Trading-AI
 
 ## Current Focus
+OKR-33 KR3 baseline packaging is active: preserve the verified credential-free baseline at `f21cf608c4fbe3c470f383988f19fde6339934ee`, add a reusable local/CI baseline script, and keep the PR scoped to documentation, retained logs, dependency/license audit, and credential-free CI.
+
+## Prior Focus
 Enhanced README.md documentation to better showcase Trading-GPT's capabilities. Updated Features section and added comprehensive Architecture diagram to improve project presentation and user understanding.
 
 ## Current Mode
@@ -36,6 +39,11 @@ The technical specification document (tech_spec.md) must include:
 All diagrams must be created using Mermaid syntax, and each section should be concise and clear.
 
 ## Recent Changes
+
+### OKR-33 KR3 Baseline Packaging - 2026-07-25
+- Captured a reviewable baseline report and small raw logs for two credential-free Go 1.23.12 fresh-cache runs.
+- Added a dependency/upstream-license audit that documents absent root license metadata as a risk and submodule licenses as AGPL-3.0 (`libs/bbgo`) and MIT (`libs/chatgpt`).
+- Added `scripts/okr33-baseline.sh` and `.github/workflows/okr33-baseline.yml` so CI runs the same safe build/unit-test path without loading `.env.local` or integration tests.
 
 ### README.md Enhancement - 2025-11-06
 - **Updated Features section** - Simplified from 3-category 18-item structure to single-level 9-item list

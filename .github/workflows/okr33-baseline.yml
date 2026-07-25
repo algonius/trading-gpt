@@ -1,0 +1,37 @@
+name: OKR-33 Credential-Free Baseline
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-unit-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.12'
+          cache: false
+
+      - name: Run credential-free baseline
+        env:
+          CACHE_ROOT: ${{ runner.temp }}/okr33-baseline-cache
+          RUN_LABEL: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash scripts/okr33-baseline.sh

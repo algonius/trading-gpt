@@ -1,0 +1,38 @@
+credential vars absent
+go version go1.23.12 darwin/arm64
+go1.23.12
+local
+/Users/sulabs_001/workspace/trading-gpt/.okr33-baseline/cache/local-ci-retry/gomod
+/Users/sulabs_001/workspace/trading-gpt/.okr33-baseline/cache/local-ci-retry/gocache
+darwin
+arm64
+1
+rm -rf build/*
+CGO_ENABLED=0 go build -o ./build/bbgo ./main.go
+go test ./pkg/...
+?   	github.com/yubing744/trading-gpt/pkg	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/agents	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/agents/trading	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/chat	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/config	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/env/coze	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/env/exchange	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/env/fng	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/env/twitterapi	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/llms	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/llms/anthropic	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/llms/googleai	[no test files]
+?   	github.com/yubing744/trading-gpt/pkg/llms/openai	[no test files]
+ok  	github.com/yubing744/trading-gpt/pkg/agents/keeper	0.840s
+?   	github.com/yubing744/trading-gpt/pkg/prompt	[no test files]
+ok  	github.com/yubing744/trading-gpt/pkg/apis/alternative	1.595s
+ok  	github.com/yubing744/trading-gpt/pkg/apis/coze	4.012s
+ok  	github.com/yubing744/trading-gpt/pkg/apis/twitterapi	1.231s
+ok  	github.com/yubing744/trading-gpt/pkg/chat/feishu	1.618s
+ok  	github.com/yubing744/trading-gpt/pkg/env	1.685s
+ok  	github.com/yubing744/trading-gpt/pkg/memory	1.827s
+ok  	github.com/yubing744/trading-gpt/pkg/notify/feishu	1.796s [no tests to run]
+ok  	github.com/yubing744/trading-gpt/pkg/notify/feishu-hook	2.177s [no tests to run]
+ok  	github.com/yubing744/trading-gpt/pkg/types	2.549s
+ok  	github.com/yubing744/trading-gpt/pkg/utils	2.515s
+ok  	github.com/yubing744/trading-gpt/pkg/utils/xtemplate	2.897s

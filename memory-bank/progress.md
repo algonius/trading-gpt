@@ -3,6 +3,8 @@
 ## Current Status
 The Trading-AI project is a functional trading system with LLM integration that allows users to express trading strategies in natural language. The Memory Bank documentation has been established to maintain comprehensive project knowledge. Recently completed major enhancements include:
 
+- **OKR-33 KR3 reproducible baseline (2026-07-25)** - Isolated checkout at `f21cf608c4fbe3c470f383988f19fde6339934ee` passed two fresh-cache Go 1.23.12 runs of `go mod download`, `make build`, and `make unit-test` with exchange/LLM/notification credentials explicitly unset. Status: `KR3_BASELINE_READY_FOR_PAPER_HTX_ADAPTER`; no HTX support or live exchange access claimed. Full report: `docs/okr33-kr3-trading-gpt-baseline.md`.
+- **OKR-33 KR3 baseline PR packaging (2026-07-25)** - Added `scripts/okr33-baseline.sh`, `.github/workflows/okr33-baseline.yml`, and `docs/okr33-kr3-dependency-license-audit.md` so the verified local baseline can be reviewed and repeated in credential-free CI. A fresh local CI-equivalent retry passed after the script pinned `PATH` to the selected Go 1.23.12 toolchain.
 - **README.md Documentation Enhancement (2025-11-06)** - Updated project documentation with streamlined Features section and comprehensive Architecture diagram, improving project presentation and user understanding
 - **Dynamic Technical Indicator Queries (Issue #62)** - AI can now dynamically request any technical indicator with any timeframe and parameter combination without pre-configuration, enabling truly adaptive trading strategies
 - **Thread Safety & Security Hardening (PR #65)** - Fixed critical race conditions across all entities using atomic operations, enhanced file permissions, and added comprehensive validation
@@ -44,6 +46,8 @@ The system now provides a robust, secure, and flexible foundation for AI-driven 
 - Interpretation quality varies between different LLM providers
 - Exchange-specific features may require additional implementation
 - Rate limiting on external APIs can impact system performance
+- Root repository license metadata is absent; submodule licenses are AGPL-3.0 for `libs/bbgo` and MIT for `libs/chatgpt`. Treat absent upstream license metadata as a risk, not permission.
+- `test/integration` is not part of the safe baseline: it loads `.env.local`, configures an OKEx session, and includes order-submission paths.
 
 ## Evolution of Project Decisions
 - **Initial Concept**: A simple trading bot with LLM integration
@@ -52,6 +56,7 @@ The system now provides a robust, secure, and flexible foundation for AI-driven 
 
 ## Milestones Achieved
 - Successful integration of bbgo trading engine
+- **OKR-33 KR3 reproducible baseline** - Two credential-free fresh-cache Go 1.23.12 build/test runs passed at commit `f21cf608c4fbe3c470f383988f19fde6339934ee` (2026-07-25)
 - Implementation of multiple LLM providers
 - Creation of agent-based architecture
 - Development of environment abstractions for external systems
