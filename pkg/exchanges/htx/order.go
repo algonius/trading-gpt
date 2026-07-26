@@ -293,7 +293,11 @@ func parseOrderID(raw json.RawMessage) (string, error) {
 }
 
 func checkOrderResponseStatus(status string, code string, message string, context string) error {
-	if status == "" || status == "ok" {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return fmt.Errorf("HTX %s response status is missing or blank", context)
+	}
+	if status == "ok" {
 		return nil
 	}
 	if code != "" {

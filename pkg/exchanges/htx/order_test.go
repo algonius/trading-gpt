@@ -31,6 +31,91 @@ func TestParseOrderAcknowledgements(t *testing.T) {
 	}
 }
 
+func TestParseOrderResponsesRejectMissingOrBlankStatus(t *testing.T) {
+	orderDetailData := `{"id":59378,"symbol":"btcusdt","amount":"0.1","price":"67800.12","created-at":1785024000000,"type":"buy-limit","field-amount":"0","state":"submitted"}`
+	matchResultsData := `[{"id":9001,"match-id":99001,"order-id":59379,"symbol":"btcusdt","type":"sell-limit","price":"67810","filled-amount":"0.02","filled-fees":"0.002","fee-currency":"usdt","created-at":1785024140000}]`
+
+	tests := []struct {
+		name    string
+		payload string
+		parse   func(string) error
+	}{
+		{
+			name:    "submit ack missing",
+			payload: `{"data":"59378"}`,
+			parse: func(payload string) error {
+				_, err := ParseSubmitOrderResponse(strings.NewReader(payload))
+				return err
+			},
+		},
+		{
+			name:    "submit ack blank",
+			payload: `{"status":" ","data":"59378"}`,
+			parse: func(payload string) error {
+				_, err := ParseSubmitOrderResponse(strings.NewReader(payload))
+				return err
+			},
+		},
+		{
+			name:    "cancel ack missing",
+			payload: `{"data":"59378"}`,
+			parse: func(payload string) error {
+				_, err := ParseCancelOrderResponse(strings.NewReader(payload))
+				return err
+			},
+		},
+		{
+			name:    "cancel ack blank",
+			payload: `{"status":" ","data":"59378"}`,
+			parse: func(payload string) error {
+				_, err := ParseCancelOrderResponse(strings.NewReader(payload))
+				return err
+			},
+		},
+		{
+			name:    "order detail missing",
+			payload: `{"data":` + orderDetailData + `}`,
+			parse: func(payload string) error {
+				_, err := ParseOrderResponse(strings.NewReader(payload))
+				return err
+			},
+		},
+		{
+			name:    "order detail blank",
+			payload: `{"status":" ","data":` + orderDetailData + `}`,
+			parse: func(payload string) error {
+				_, err := ParseOrderResponse(strings.NewReader(payload))
+				return err
+			},
+		},
+		{
+			name:    "match results missing",
+			payload: `{"data":` + matchResultsData + `}`,
+			parse: func(payload string) error {
+				_, err := ParseOrderTrades(strings.NewReader(payload))
+				return err
+			},
+		},
+		{
+			name:    "match results blank",
+			payload: `{"status":" ","data":` + matchResultsData + `}`,
+			parse: func(payload string) error {
+				_, err := ParseOrderTrades(strings.NewReader(payload))
+				return err
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.parse(tc.payload)
+			if err == nil || !strings.Contains(err.Error(), "status is missing or blank") {
+				t.Fatalf("parse error = %v, want missing/blank status failure", err)
+			}
+		})
+	}
+}
+
 func TestParseOrderResponsePartialCanceledConservativeMapping(t *testing.T) {
 	f := openHTXFixture(t, "testdata/order_partial_canceled.json")
 	defer f.Close()
