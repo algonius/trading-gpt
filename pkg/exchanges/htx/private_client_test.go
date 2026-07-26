@@ -249,6 +249,107 @@ func TestPrivateRetryClassificationAndBoundedPolicy(t *testing.T) {
 	})
 }
 
+func TestPrivateRetryPolicyAppliesOnlyToReadOnlyActions(t *testing.T) {
+	tests := map[PrivateAction]bool{
+		PrivateActionQueryAccountBalance: true,
+		PrivateActionQueryOrder:          true,
+		PrivateActionQueryOrderTrades:    true,
+		PrivateActionSubmitOrder:         false,
+		PrivateActionCancelOrder:         false,
+		PrivateAction("unsupported"):     false,
+	}
+
+	for action, expected := range tests {
+		t.Run(string(action), func(t *testing.T) {
+			if got := readOnlyPrivateAction(action); got != expected {
+				t.Fatalf("readOnlyPrivateAction(%q) = %t, want %t", action, got, expected)
+			}
+		})
+	}
+}
+
+func TestPrivateMutationActionsDoNotRetry(t *testing.T) {
+	successAfterFailure := privateJSONResponse(200, `{"status":"ok","data":"retry-must-not-reach"}`)
+	failures := []struct {
+		name          string
+		result        fakePrivateResult
+		wantErr       string
+		successResult fakePrivateResult
+	}{
+		{
+			name:          "transport error",
+			result:        fakePrivateResult{err: errors.New("temporary transport failure")},
+			wantErr:       "transport failed",
+			successResult: fakePrivateResult{response: successAfterFailure},
+		},
+		{
+			name:          "HTTP 429",
+			result:        fakePrivateResult{response: privateJSONResponse(429, `{"status":"error","err-code":"api-ratelimit"}`)},
+			wantErr:       "HTTP 429",
+			successResult: fakePrivateResult{response: successAfterFailure},
+		},
+		{
+			name:          "HTTP 503",
+			result:        fakePrivateResult{response: privateJSONResponse(503, `temporarily unavailable`)},
+			wantErr:       "HTTP 503",
+			successResult: fakePrivateResult{response: successAfterFailure},
+		},
+	}
+	mutations := []struct {
+		name     string
+		path     string
+		call     func(context.Context, *PrivateClient) error
+		wantBody bool
+	}{
+		{
+			name:     "submit order",
+			path:     PrivateOrderPlacePath,
+			wantBody: true,
+			call: func(ctx context.Context, client *PrivateClient) error {
+				_, err := client.SubmitOrder(ctx, "100009", testPrivateSubmitOrder())
+				return err
+			},
+		},
+		{
+			name: "cancel order",
+			path: "/v1/order/orders/59379/submitcancel",
+			call: func(ctx context.Context, client *PrivateClient) error {
+				_, err := client.CancelOrder(ctx, "59379")
+				return err
+			},
+		},
+	}
+
+	for _, mutation := range mutations {
+		for _, failure := range failures {
+			t.Run(mutation.name+" "+failure.name, func(t *testing.T) {
+				transport := &fakePrivateTransport{
+					responses: []fakePrivateResult{failure.result, failure.successResult},
+				}
+				client := newTestPrivateClient(t, transport, WithPrivateRetryPolicy(PrivateRetryPolicy{MaxAttempts: 3}))
+
+				err := mutation.call(context.Background(), client)
+				if err == nil || !strings.Contains(err.Error(), failure.wantErr) {
+					t.Fatalf("%s error = %v, want %q without retry", mutation.name, err, failure.wantErr)
+				}
+				if len(transport.requests) != 1 {
+					t.Fatalf("%s %s transport attempts = %d, want exactly 1", mutation.name, failure.name, len(transport.requests))
+				}
+				if len(transport.responses) != 1 {
+					t.Fatalf("%s %s consumed queued retry response; remaining responses = %d, want 1", mutation.name, failure.name, len(transport.responses))
+				}
+				req := transport.requests[0]
+				if req.Path != mutation.path {
+					t.Fatalf("%s path = %s, want %s", mutation.name, req.Path, mutation.path)
+				}
+				if mutation.wantBody && len(req.Body) == 0 {
+					t.Fatalf("%s request body is empty", mutation.name)
+				}
+			})
+		}
+	}
+}
+
 func TestPrivateClientFailsClosed(t *testing.T) {
 	t.Run("transport absent", func(t *testing.T) {
 		_, err := NewPrivateClient(DefaultRESTBaseURL, PrivateCredentials{AccessKeyID: dummyAccessKey, SecretKey: dummySecretKey}, nil)
@@ -379,6 +480,17 @@ func newTestPrivateClient(t *testing.T, transport PrivateTransport, options ...P
 		t.Fatalf("NewPrivateClient returned error: %v", err)
 	}
 	return client
+}
+
+func testPrivateSubmitOrder() types.SubmitOrder {
+	return types.SubmitOrder{
+		ClientOrderID: "client-1",
+		Symbol:        "btc-usdt",
+		Side:          types.SideTypeBuy,
+		Type:          types.OrderTypeLimit,
+		Quantity:      fixedpoint.MustNewFromString("0.1"),
+		Price:         fixedpoint.MustNewFromString("67800.12"),
+	}
 }
 
 func privateJSONResponse(statusCode int, body string) PrivateResponse {

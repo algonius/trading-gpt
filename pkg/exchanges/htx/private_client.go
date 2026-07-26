@@ -346,7 +346,10 @@ func (c *PrivateClient) do(ctx context.Context, action PrivateAction, method str
 		return nil, err
 	}
 
-	attempts := c.retryPolicy.attempts()
+	attempts := 1
+	if readOnlyPrivateAction(action) {
+		attempts = c.retryPolicy.attempts()
+	}
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -423,6 +426,15 @@ func (p PrivateRetryPolicy) attempts() int {
 		return MaxPrivateRetryAttempts
 	}
 	return p.MaxAttempts
+}
+
+func readOnlyPrivateAction(action PrivateAction) bool {
+	switch action {
+	case PrivateActionQueryAccountBalance, PrivateActionQueryOrder, PrivateActionQueryOrderTrades:
+		return true
+	default:
+		return false
+	}
 }
 
 func supportedPrivateRoute(action PrivateAction, method string, path string) bool {
