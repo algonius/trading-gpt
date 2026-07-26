@@ -1,0 +1,29 @@
+{
+  "status": "ok",
+  "data": [
+    {
+      "id": 9001,
+      "match-id": 99001,
+      "order-id": 59379,
+      "symbol": "btcusdt",
+      "type": "sell-limit",
+      "price": "67810.000000000000000000",
+      "filled-amount": "0.020000000000000000",
+      "filled-fees": "0.002712400000000000",
+      "fee-currency": "usdt",
+      "created-at": 1785024140000
+    },
+    {
+      "id": 9002,
+      "match-id": 99002,
+      "order-id": 59379,
+      "symbol": "btcusdt",
+      "type": "sell-limit",
+      "price": "67810.000000000000000000",
+      "filled-amount": "0.030000000000000000",
+      "filled-fees": "0.004068600000000000",
+      "fee-currency": "usdt",
+      "created-at": 1785024180000
+    }
+  ]
+}
