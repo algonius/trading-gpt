@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "data": {
+    "id": 59378,
+    "symbol": "btcusdt",
+    "account-id": 100009,
+    "amount": "0.100000000000000000",
+    "price": "67800.120000000000000000",
+    "created-at": 1785024000000,
+    "type": "buy-limit",
+    "field-amount": "0.040000000000000000",
+    "field-cash-amount": "2712.004800000000000000",
+    "field-fees": "0.000040000000000000",
+    "finished-at": 1785024060000,
+    "source": "api",
+    "state": "partial-canceled",
+    "canceled-at": 1785024060000,
+    "client-order-id": "fixture-client-order"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "status": "ok",
+  "data": {
+    "id": 59379,
+    "symbol": "btcusdt",
+    "account-id": 100009,
+    "amount": "0.050000000000000000",
+    "price": "67810.000000000000000000",
+    "created-at": 1785024120000,
+    "type": "sell-limit",
+    "field-amount": "0.050000000000000000",
+    "field-cash-amount": "3390.500000000000000000",
+    "field-fees": "0.006781000000000000",
+    "finished-at": 1785024180000,
+    "source": "api",
+    "state": "filled",
+    "client-order-id": "fixture-filled-order"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "data": {
+    "id": 59380,
+    "symbol": "btcusdt",
+    "amount": "0.010000000000000000",
+    "price": "67800.000000000000000000",
+    "created-at": 1785024200000,
+    "type": "buy-limit",
+    "field-amount": "0",
+    "state": "mystery-state"
+  }
+}
