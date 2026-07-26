@@ -125,7 +125,7 @@ func TestPrivateSessionUsesInjectedTransport(t *testing.T) {
 			{response: privateJSONResponse(http.StatusOK, privateSessionBalanceResponse)},
 		},
 	}
-	session := newTestPrivateSession(t, "https://fixture.invalid", WithPrivateSessionTransport(transport))
+	session := newTestPrivateSession(t, "https://127.0.0.1:443", WithPrivateSessionTransport(transport))
 
 	balances, err := session.QueryAccountBalances(context.Background())
 	if err != nil {
@@ -139,6 +139,62 @@ func TestPrivateSessionUsesInjectedTransport(t *testing.T) {
 	}
 	if req := transport.requests[0]; req.Endpoint == "" || req.Path != "/v1/account/accounts/100009/balance" || req.Method != "GET" {
 		t.Fatalf("transport request = %#v, want signed balance GET", req)
+	}
+}
+
+func TestPrivateSessionAcceptsLoopbackFixtureBaseURLs(t *testing.T) {
+	tests := []string{
+		"http://localhost:8080",
+		"https://localhost",
+		"http://127.0.0.1:8080",
+		"https://[::1]:9443",
+	}
+
+	for _, baseURL := range tests {
+		t.Run(baseURL, func(t *testing.T) {
+			session := newTestPrivateSession(t, baseURL, WithPrivateSessionTransport(&fakePrivateTransport{}))
+			if session == nil {
+				t.Fatalf("NewPrivateSession returned nil session")
+			}
+		})
+	}
+}
+
+func TestPrivateSessionRejectsNonLoopbackFixtureBaseURLsBeforeTransport(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		wantErr string
+	}{
+		{name: "HTX public host", baseURL: "https://api.huobi.pro", wantErr: "not loopback"},
+		{name: "example public host", baseURL: "https://example.com", wantErr: "not loopback"},
+		{name: "LAN host", baseURL: "http://192.168.1.10", wantErr: "not loopback"},
+		{name: "unsupported scheme", baseURL: "ftp://localhost", wantErr: "scheme"},
+		{name: "missing host", baseURL: "http:///fixture", wantErr: "host"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &fakePrivateTransport{
+				responses: []fakePrivateResult{
+					{response: privateJSONResponse(http.StatusOK, privateSessionBalanceResponse)},
+				},
+			}
+			_, err := NewPrivateSession(
+				context.Background(),
+				Config{},
+				"100009",
+				testPrivateCredentials(),
+				WithPrivateSessionBaseURL(tc.baseURL),
+				WithPrivateSessionTransport(transport),
+			)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("NewPrivateSession error = %v, want %q", err, tc.wantErr)
+			}
+			if len(transport.requests) != 0 {
+				t.Fatalf("transport requests = %d, want 0 before rejecting %s", len(transport.requests), tc.baseURL)
+			}
+		})
 	}
 }
 
@@ -246,7 +302,7 @@ func TestPrivateSessionFailsClosed(t *testing.T) {
 			Config{},
 			"100009",
 			PrivateCredentials{},
-			WithPrivateSessionBaseURL("https://fixture.invalid"),
+			WithPrivateSessionBaseURL("http://localhost"),
 			WithPrivateSessionTransport(&fakePrivateTransport{}),
 		)
 		if err == nil || !strings.Contains(err.Error(), "access key id is empty") {

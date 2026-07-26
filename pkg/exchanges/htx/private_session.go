@@ -3,6 +3,8 @@ package htx
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 
 	"github.com/c9s/bbgo/pkg/types"
@@ -73,6 +75,9 @@ func NewPrivateSession(ctx context.Context, cfg Config, accountID string, creden
 	}
 	if opts.baseURL == "" {
 		return nil, fmt.Errorf("HTX private session base URL is empty")
+	}
+	if err := validatePrivateSessionFixtureBaseURL(opts.baseURL); err != nil {
+		return nil, err
 	}
 
 	transport := opts.transport
@@ -180,4 +185,27 @@ func (s *PrivateSession) ready() error {
 		return fmt.Errorf("HTX private session client is not initialized")
 	}
 	return nil
+}
+
+func validatePrivateSessionFixtureBaseURL(baseURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return fmt.Errorf("invalid HTX private session fixture base URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("invalid HTX private session fixture base URL scheme %q", parsed.Scheme)
+	}
+
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" {
+		return fmt.Errorf("invalid HTX private session fixture base URL host")
+	}
+	if host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+
+	return fmt.Errorf("HTX private session fixture base URL host %q is not loopback", host)
 }
