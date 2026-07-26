@@ -15,15 +15,17 @@ import (
 )
 
 const (
-	DefaultHTTPTimeout      = 10 * time.Second
-	DefaultMaxResponseBytes = int64(1 << 20)
+	DefaultHTTPTimeout             = 10 * time.Second
+	DefaultMaxResponseBytes        = int64(1 << 20)
+	DefaultSymbolsMaxResponseBytes = int64(2 << 20)
 )
 
 type PublicClient struct {
-	baseURL          *url.URL
-	paths            PublicMarketConfig
-	httpClient       *http.Client
-	maxResponseBytes int64
+	baseURL                 *url.URL
+	paths                   PublicMarketConfig
+	httpClient              *http.Client
+	maxResponseBytes        int64
+	maxSymbolsResponseBytes int64
 }
 
 type PublicClientOption func(*PublicClient)
@@ -56,6 +58,15 @@ func WithMaxResponseBytes(limit int64) PublicClientOption {
 	return func(c *PublicClient) {
 		if limit > 0 {
 			c.maxResponseBytes = limit
+			c.maxSymbolsResponseBytes = limit
+		}
+	}
+}
+
+func WithMaxSymbolsResponseBytes(limit int64) PublicClientOption {
+	return func(c *PublicClient) {
+		if limit > 0 {
+			c.maxSymbolsResponseBytes = limit
 		}
 	}
 }
@@ -86,7 +97,8 @@ func NewPublicClient(cfg Config, options ...PublicClientOption) (*PublicClient, 
 		httpClient: &http.Client{
 			Timeout: DefaultHTTPTimeout,
 		},
-		maxResponseBytes: DefaultMaxResponseBytes,
+		maxResponseBytes:        DefaultMaxResponseBytes,
+		maxSymbolsResponseBytes: DefaultSymbolsMaxResponseBytes,
 	}
 
 	for _, option := range options {
@@ -99,6 +111,9 @@ func NewPublicClient(cfg Config, options ...PublicClientOption) (*PublicClient, 
 	if client.maxResponseBytes <= 0 {
 		client.maxResponseBytes = DefaultMaxResponseBytes
 	}
+	if client.maxSymbolsResponseBytes <= 0 {
+		client.maxSymbolsResponseBytes = DefaultSymbolsMaxResponseBytes
+	}
 
 	return client, nil
 }
@@ -107,7 +122,7 @@ func (c *PublicClient) QuerySymbolSpecs(ctx context.Context) ([]SymbolSpec, erro
 	if err := c.ready(); err != nil {
 		return nil, err
 	}
-	body, err := c.get(ctx, c.paths.SymbolsPath, nil)
+	body, err := c.get(ctx, c.paths.SymbolsPath, nil, c.maxSymbolsResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +162,7 @@ func (c *PublicClient) QueryKLines(ctx context.Context, symbol string, interval 
 		query.Set("to", strconv.FormatInt(options.EndTime.Unix(), 10))
 	}
 
-	body, err := c.get(ctx, c.paths.KLinesPath, query)
+	body, err := c.get(ctx, c.paths.KLinesPath, query, c.maxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +181,7 @@ func (c *PublicClient) QueryTicker(ctx context.Context, symbol string) (*types.T
 	query := url.Values{}
 	query.Set("symbol", strings.ToLower(symbol))
 
-	body, err := c.get(ctx, c.paths.TickerPath, query)
+	body, err := c.get(ctx, c.paths.TickerPath, query, c.maxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +217,7 @@ func HTXPeriod(interval types.Interval) string {
 	}
 }
 
-func (c *PublicClient) get(ctx context.Context, path string, query url.Values) ([]byte, error) {
+func (c *PublicClient) get(ctx context.Context, path string, query url.Values, limit int64) ([]byte, error) {
 	if err := c.ready(); err != nil {
 		return nil, err
 	}
@@ -226,7 +241,7 @@ func (c *PublicClient) get(ctx context.Context, path string, query url.Values) (
 	}
 	defer resp.Body.Close()
 
-	body, err := readBounded(resp.Body, c.maxResponseBytes)
+	body, err := readBounded(resp.Body, limit)
 	if err != nil {
 		return nil, err
 	}

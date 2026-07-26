@@ -3,6 +3,7 @@ package htx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -192,6 +193,63 @@ func TestPublicClientResponseSizeBound(t *testing.T) {
 	}
 }
 
+func TestPublicClientLargeSymbolsUsesEndpointBound(t *testing.T) {
+	body := largeSymbolsResponse(t, DefaultMaxResponseBytes+400*1024)
+	if int64(len(body)) <= DefaultMaxResponseBytes {
+		t.Fatalf("large symbols body = %d bytes, want > %d", len(body), DefaultMaxResponseBytes)
+	}
+	if int64(len(body)) >= DefaultSymbolsMaxResponseBytes {
+		t.Fatalf("large symbols body = %d bytes, want < %d", len(body), DefaultSymbolsMaxResponseBytes)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != SymbolsPath {
+			t.Fatalf("path = %s, want %s", r.URL.Path, SymbolsPath)
+		}
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	client := newTestPublicClient(t, server.URL)
+	markets, err := client.QueryMarkets(context.Background())
+	if err != nil {
+		t.Fatalf("QueryMarkets returned error for %d byte symbols body: %v", len(body), err)
+	}
+	if !markets.Has("BTCUSDT") {
+		t.Fatal("BTCUSDT market missing")
+	}
+}
+
+func TestPublicClientLargeSymbolsStillBounded(t *testing.T) {
+	body := []byte(`{"status":"ok","data":[` + strings.Repeat(" ", int(DefaultSymbolsMaxResponseBytes)+1) + `]}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	client := newTestPublicClient(t, server.URL)
+	_, err := client.QueryMarkets(context.Background())
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("response exceeds %d byte limit", DefaultSymbolsMaxResponseBytes)) {
+		t.Fatalf("QueryMarkets error = %v, want symbols response size error", err)
+	}
+}
+
+func TestPublicClientCustomResponseBoundAppliesToSymbols(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok","data":` + strings.Repeat(" ", 64) + `[]}`))
+	}))
+	defer server.Close()
+
+	client := newTestPublicClient(t, server.URL, WithMaxResponseBytes(32))
+	_, err := client.QueryMarkets(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "response exceeds 32 byte limit") {
+		t.Fatalf("QueryMarkets error = %v, want custom response size error", err)
+	}
+}
+
 func TestPublicClientTimeoutIsBounded(t *testing.T) {
 	httpClient := &http.Client{}
 	client := newTestPublicClient(t, "https://example.test", WithHTTPClient(httpClient))
@@ -221,6 +279,32 @@ func newTestPublicClient(t *testing.T, baseURL string, options ...PublicClientOp
 		t.Fatalf("NewPublicClient returned error: %v", err)
 	}
 	return client
+}
+
+func largeSymbolsResponse(t *testing.T, minBytes int64) []byte {
+	t.Helper()
+
+	var b strings.Builder
+	b.Grow(int(minBytes) + 1024)
+	b.WriteString(`{"status":"ok","data":[`)
+	writeSymbolSpec(&b, "btcusdt", "btc")
+
+	for i := 0; int64(b.Len()) <= minBytes; i++ {
+		b.WriteByte(',')
+		writeSymbolSpec(&b, fmt.Sprintf("x%06dusdt", i), fmt.Sprintf("x%06d", i))
+	}
+
+	b.WriteString(`]}`)
+	return []byte(b.String())
+}
+
+func writeSymbolSpec(b *strings.Builder, symbol string, base string) {
+	fmt.Fprintf(
+		b,
+		`{"symbol":%q,"state":"online","base-currency":%q,"quote-currency":"usdt","price-precision":2,"amount-precision":6,"value-precision":8,"min-order-amt":"0.0001","min-order-value":"5"}`,
+		symbol,
+		base,
+	)
 }
 
 func writeFixture(t *testing.T, w http.ResponseWriter, path string) {
