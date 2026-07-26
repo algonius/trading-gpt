@@ -1,0 +1,38 @@
+{
+  "status": "ok",
+  "data": [
+    {
+      "symbol": "btcusdt",
+      "state": "online",
+      "base-currency": "btc",
+      "quote-currency": "usdt",
+      "price-precision": 2,
+      "amount-precision": 6,
+      "value-precision": 8,
+      "min-order-amt": "0.0001",
+      "min-order-value": "5"
+    },
+    {
+      "symbol": "ethusdt",
+      "state": "online",
+      "base-currency": "eth",
+      "quote-currency": "usdt",
+      "price-precision": 2,
+      "amount-precision": 5,
+      "value-precision": 8,
+      "min-order-amt": "0.001",
+      "min-order-value": "5"
+    },
+    {
+      "symbol": "suspendedusdt",
+      "state": "suspend",
+      "base-currency": "suspended",
+      "quote-currency": "usdt",
+      "price-precision": 4,
+      "amount-precision": 2,
+      "value-precision": 8,
+      "min-order-amt": "1",
+      "min-order-value": "5"
+    }
+  ]
+}

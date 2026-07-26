@@ -1,0 +1,17 @@
+# OKR-33 KR4 HTX paper/replay configuration fixture.
+# This file is intentionally not a runnable bbgo session config. The embedded
+# bbgo version in this repository has no htx/huobi exchange factory, so this
+# config only describes paper-safe metadata for fixture/replay tests.
+exchange: htx
+mode: paper
+allow_authenticated: false
+public_market_data:
+  enabled: false
+  rest_base_url: https://api.huobi.pro
+  symbols_path: /v1/common/symbols
+  klines_path: /market/history/kline
+  ticker_path: /market/detail/merged
+fixture_symbols_path: pkg/exchanges/htx/testdata/symbols.json
+symbols:
+  - BTCUSDT
+  - ETHUSDT
