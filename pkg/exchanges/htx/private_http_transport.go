@@ -68,6 +68,7 @@ func NewPrivateHTTPTransport(options ...PrivateHTTPTransportOption) (*PrivateHTT
 		transport.httpClient.Timeout = DefaultHTTPTimeout
 	}
 	transport.httpClient.Jar = nil
+	transport.httpClient.CheckRedirect = preservePrivateHTTPRedirectResponse
 	if transport.maxResponseBytes <= 0 {
 		transport.maxResponseBytes = DefaultPrivateMaxResponseBytes
 	}
@@ -150,4 +151,8 @@ func readPrivateHTTPBounded(r io.Reader, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("HTX private HTTP response exceeds %d byte limit", limit)
 	}
 	return body, nil
+}
+
+func preservePrivateHTTPRedirectResponse(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }

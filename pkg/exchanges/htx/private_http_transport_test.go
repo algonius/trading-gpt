@@ -88,6 +88,52 @@ func TestPrivateHTTPTransportClearsCookieJar(t *testing.T) {
 	}
 }
 
+func TestPrivateHTTPTransportPreservesRedirectWithInjectedClient(t *testing.T) {
+	var hits atomic.Int32
+	var injectedRedirectPolicyCalled atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.URL.Path == "/redirect-target" {
+			_, _ = w.Write([]byte(`{"status":"ok","data":"followed"}`))
+			return
+		}
+
+		w.Header().Set("Location", "/redirect-target")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		_, _ = w.Write([]byte(`redirect preserved`))
+	}))
+	defer server.Close()
+
+	httpClient := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			injectedRedirectPolicyCalled.Store(true)
+			return nil
+		},
+	}
+	transport, err := NewPrivateHTTPTransport(WithPrivateHTTPClient(httpClient))
+	if err != nil {
+		t.Fatalf("NewPrivateHTTPTransport returned error: %v", err)
+	}
+
+	resp, err := transport.RoundTrip(context.Background(), PrivateRequest{
+		Method:   "POST",
+		Endpoint: server.URL + "/redirect-source",
+		Body:     []byte(`{"fixture":"body"}`),
+	})
+	if err != nil {
+		t.Fatalf("RoundTrip returned error: %v", err)
+	}
+	if resp.StatusCode != http.StatusTemporaryRedirect || string(resp.Body) != "redirect preserved" {
+		t.Fatalf("response = %d %q, want preserved 307 redirect body", resp.StatusCode, string(resp.Body))
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("server requests = %d, want exactly 1", hits.Load())
+	}
+	if injectedRedirectPolicyCalled.Load() {
+		t.Fatal("injected CheckRedirect was used; private transport must override redirect following")
+	}
+}
+
 func TestPrivateHTTPTransportContextCancellation(t *testing.T) {
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +216,71 @@ func TestPrivateHTTPTransportStreamsResponseSizeBound(t *testing.T) {
 	}
 	if !body.closed {
 		t.Fatal("response body was not closed")
+	}
+}
+
+func TestPrivateHTTPTransportMutationRedirectsAreSingleRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(context.Context, *PrivateClient) error
+	}{
+		{
+			name: "submit order",
+			call: func(ctx context.Context, client *PrivateClient) error {
+				_, err := client.SubmitOrder(ctx, "100009", testPrivateSubmitOrder())
+				return err
+			},
+		},
+		{
+			name: "cancel order",
+			call: func(ctx context.Context, client *PrivateClient) error {
+				_, err := client.CancelOrder(ctx, "59379")
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int32
+			var targetHits atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				if r.URL.Path == "/redirect-target" {
+					targetHits.Add(1)
+					_, _ = w.Write([]byte(`{"status":"ok","data":"followed"}`))
+					return
+				}
+
+				w.Header().Set("Location", "/redirect-target")
+				w.WriteHeader(http.StatusTemporaryRedirect)
+				_, _ = w.Write([]byte(`redirect preserved`))
+			}))
+			defer server.Close()
+
+			transport := newTestPrivateHTTPTransport(t)
+			client, err := NewPrivateClient(
+				server.URL,
+				PrivateCredentials{AccessKeyID: dummyAccessKey, SecretKey: dummySecretKey},
+				transport,
+				WithPrivateClock(func() time.Time {
+					return time.Date(2026, 7, 26, 1, 2, 3, 0, time.UTC)
+				}),
+				WithPrivateRetryPolicy(PrivateRetryPolicy{MaxAttempts: 3}),
+			)
+			if err != nil {
+				t.Fatalf("NewPrivateClient returned error: %v", err)
+			}
+
+			err = tc.call(context.Background(), client)
+			if err == nil || !strings.Contains(err.Error(), "HTTP 307") || !strings.Contains(err.Error(), "redirect preserved") {
+				t.Fatalf("%s error = %v, want preserved redirect classification", tc.name, err)
+			}
+			if hits.Load() != 1 {
+				t.Fatalf("%s server requests = %d, want exactly 1", tc.name, hits.Load())
+			}
+			if targetHits.Load() != 0 {
+				t.Fatalf("%s redirect target requests = %d, want 0", tc.name, targetHits.Load())
+			}
+		})
 	}
 }
 
