@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ type PrivateRequest struct {
 	Host           string
 	Path           string
 	Query          url.Values
+	Header         http.Header
 	Body           []byte
 	Endpoint       string
 	SigningPayload string
@@ -186,12 +188,19 @@ func (c *PrivateClient) BuildPrivateRequest(action PrivateAction, method string,
 	endpoint.Path = path
 	endpoint.RawQuery = signed.Params.Encode()
 
+	header := make(http.Header)
+	header.Set("Accept", "application/json")
+	if len(body) > 0 {
+		header.Set("Content-Type", "application/json")
+	}
+
 	return PrivateRequest{
 		Action:         action,
 		Method:         method,
 		Host:           strings.ToLower(c.baseURL.Host),
 		Path:           path,
 		Query:          cloneURLValues(signed.Params),
+		Header:         header,
 		Body:           append([]byte(nil), body...),
 		Endpoint:       endpoint.String(),
 		SigningPayload: signed.Payload,
@@ -624,6 +633,7 @@ func (c *PrivateClient) privateError(action PrivateAction, message string) error
 
 func (r PrivateRequest) clone() PrivateRequest {
 	r.Query = cloneURLValues(r.Query)
+	r.Header = r.Header.Clone()
 	r.Body = append([]byte(nil), r.Body...)
 	return r
 }
