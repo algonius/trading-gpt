@@ -68,6 +68,86 @@ func TestPaperLifecycleReplayLedgerIsDeterministicAndReconciles(t *testing.T) {
 	}
 }
 
+func TestPaperLifecycleDoesNotFillOrderCreatedAfterClosedBar(t *testing.T) {
+	ctx := context.Background()
+	start := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	session := newTestPaperLifecycleSessionAt(t, start.Add(time.Minute))
+
+	ack, err := session.SubmitOrder(ctx, paperLimitOrder("after-bar", types.SideTypeBuy, "0.05", "67820"))
+	if err != nil {
+		t.Fatalf("SubmitOrder returned error: %v", err)
+	}
+	beforeBalances := sessionMustBalances(t, session)
+	beforeLedger := session.Ledger()
+
+	fills, err := session.AdvanceKLines(ctx, "BTCUSDT", types.Interval1m, types.KLineQueryOptions{
+		StartTime: &start,
+		Limit:     1,
+	})
+	if err != nil {
+		t.Fatalf("AdvanceKLines returned error: %v", err)
+	}
+	if len(fills) != 0 {
+		t.Fatalf("fills = %#v, want none for order created after closed bar", fills)
+	}
+	assertPaperLifecycleNoMutation(t, session, beforeBalances, beforeLedger)
+
+	order := sessionMustOrder(t, session, ack.OrderID)
+	if order.Status != types.OrderStatusNew || !order.IsWorking || order.ExecutedQuantity.Sign() != 0 {
+		t.Fatalf("order = %#v, want still-working unfilled order", order)
+	}
+	if trades := sessionMustTrades(t, session, ack.OrderID); len(trades) != 0 {
+		t.Fatalf("trades = %#v, want none", trades)
+	}
+}
+
+func TestPaperLifecycleDoesNotFillReplayedProcessedBar(t *testing.T) {
+	ctx := context.Background()
+	start := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	session := newTestPaperLifecycleSession(t)
+
+	fills, err := session.AdvanceKLines(ctx, "BTCUSDT", types.Interval1m, types.KLineQueryOptions{
+		StartTime: &start,
+		Limit:     1,
+	})
+	if err != nil {
+		t.Fatalf("initial AdvanceKLines returned error: %v", err)
+	}
+	if len(fills) != 0 {
+		t.Fatalf("initial fills = %#v, want none before orders exist", fills)
+	}
+	if len(session.Ledger()) != 0 {
+		t.Fatalf("ledger = %#v, want no ledger mutation from cursor-only bar processing", session.Ledger())
+	}
+
+	ack, err := session.SubmitOrder(ctx, paperLimitOrder("same-bar-replay", types.SideTypeBuy, "0.05", "67820"))
+	if err != nil {
+		t.Fatalf("SubmitOrder returned error: %v", err)
+	}
+	beforeBalances := sessionMustBalances(t, session)
+	beforeLedger := session.Ledger()
+
+	fills, err = session.AdvanceKLines(ctx, "BTCUSDT", types.Interval1m, types.KLineQueryOptions{
+		StartTime: &start,
+		Limit:     1,
+	})
+	if err != nil {
+		t.Fatalf("replayed AdvanceKLines returned error: %v", err)
+	}
+	if len(fills) != 0 {
+		t.Fatalf("replayed fills = %#v, want none for already-processed bar", fills)
+	}
+	assertPaperLifecycleNoMutation(t, session, beforeBalances, beforeLedger)
+
+	order := sessionMustOrder(t, session, ack.OrderID)
+	if order.Status != types.OrderStatusNew || !order.IsWorking || order.ExecutedQuantity.Sign() != 0 {
+		t.Fatalf("order = %#v, want still-working unfilled order", order)
+	}
+	if trades := sessionMustTrades(t, session, ack.OrderID); len(trades) != 0 {
+		t.Fatalf("trades = %#v, want none", trades)
+	}
+}
+
 func TestPaperLifecycleFailsClosed(t *testing.T) {
 	t.Run("unsupported live mode", func(t *testing.T) {
 		_, err := NewPaperLifecycleSession(context.Background(), Config{Mode: Mode("live")}, newTestReplayMarketData(t))
@@ -210,6 +290,12 @@ func runPaperLifecycleScenario(t *testing.T) paperLifecycleSnapshot {
 func newTestPaperLifecycleSession(t *testing.T) *PaperLifecycleSession {
 	t.Helper()
 
+	return newTestPaperLifecycleSessionAt(t, time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC))
+}
+
+func newTestPaperLifecycleSessionAt(t *testing.T, now time.Time) *PaperLifecycleSession {
+	t.Helper()
+
 	session, err := NewPaperLifecycleSession(
 		context.Background(),
 		Config{Mode: ModeReplay},
@@ -218,7 +304,7 @@ func newTestPaperLifecycleSession(t *testing.T) *PaperLifecycleSession {
 			"USDT": {Currency: "USDT", Available: fixedpoint.MustNewFromString("10000")},
 		}),
 		WithPaperLifecycleClock(func() time.Time {
-			return time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+			return now
 		}),
 	)
 	if err != nil {
@@ -266,4 +352,15 @@ func sessionMustTrades(t *testing.T, session *PaperLifecycleSession, orderID str
 		t.Fatalf("QueryOrderTrades(%s) returned error: %v", orderID, err)
 	}
 	return trades
+}
+
+func assertPaperLifecycleNoMutation(t *testing.T, session *PaperLifecycleSession, beforeBalances types.BalanceMap, beforeLedger []PaperLedgerEntry) {
+	t.Helper()
+
+	if after := sessionMustBalances(t, session); !reflect.DeepEqual(after, beforeBalances) {
+		t.Fatalf("balances changed after no-fill replay:\nbefore=%#v\nafter=%#v", beforeBalances, after)
+	}
+	if after := session.Ledger(); !reflect.DeepEqual(after, beforeLedger) {
+		t.Fatalf("ledger changed after no-fill replay:\nbefore=%#v\nafter=%#v", beforeLedger, after)
+	}
 }

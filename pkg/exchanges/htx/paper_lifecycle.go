@@ -32,6 +32,7 @@ type PaperLifecycleSession struct {
 	ledger     []PaperLedgerEntry
 	positions  map[string][]paperPositionLot
 	closed     []PaperClosedTrade
+	processed  map[paperBarCursorKey]time.Time
 	feeRate    fixedpoint.Value
 	now        func() time.Time
 	nextOrder  uint64
@@ -85,6 +86,11 @@ type paperPositionLot struct {
 	orderID  uint64
 	quantity fixedpoint.Value
 	cost     fixedpoint.Value
+}
+
+type paperBarCursorKey struct {
+	symbol   string
+	interval types.Interval
 }
 
 func WithPaperLifecycleBalances(balances types.BalanceMap) PaperLifecycleOption {
@@ -156,6 +162,7 @@ func NewPaperLifecycleSession(ctx context.Context, cfg Config, source MarketData
 		orders:     make(map[uint64]types.Order),
 		trades:     make(map[uint64][]types.Trade),
 		positions:  make(map[string][]paperPositionLot),
+		processed:  make(map[paperBarCursorKey]time.Time),
 		feeRate:    opts.feeRate,
 		now:        opts.now,
 		nextOrder:  1,
@@ -320,7 +327,14 @@ func (s *PaperLifecycleSession) AdvanceKLines(ctx context.Context, symbol string
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		trades, err := s.advanceKLine(kline)
+		process, barEnd, err := s.markKLineProcessed(kline, symbol, interval)
+		if err != nil {
+			return nil, err
+		}
+		if !process {
+			continue
+		}
+		trades, err := s.advanceKLine(kline, barEnd)
 		if err != nil {
 			return nil, err
 		}
@@ -425,13 +439,10 @@ func (s *PaperLifecycleSession) validateSubmitOrder(order types.SubmitOrder) (ty
 	return market, symbol, nil
 }
 
-func (s *PaperLifecycleSession) advanceKLine(kline types.KLine) ([]types.Trade, error) {
+func (s *PaperLifecycleSession) advanceKLine(kline types.KLine, barEnd time.Time) ([]types.Trade, error) {
 	symbol := NormalizeSymbol(kline.Symbol)
 	if symbol == "" {
 		return nil, fmt.Errorf("HTX paper kline symbol is empty")
-	}
-	if !kline.Closed {
-		return nil, nil
 	}
 
 	ids := make([]uint64, 0, len(s.orders))
@@ -445,6 +456,9 @@ func (s *PaperLifecycleSession) advanceKLine(kline types.KLine) ([]types.Trade, 
 	fills := make([]types.Trade, 0, len(ids))
 	for _, id := range ids {
 		order := s.orders[id]
+		if barEnd.Before(order.CreationTime.Time()) {
+			continue
+		}
 		if !paperOrderCrossesKLine(order, kline) {
 			continue
 		}
@@ -455,6 +469,40 @@ func (s *PaperLifecycleSession) advanceKLine(kline types.KLine) ([]types.Trade, 
 		fills = append(fills, trade)
 	}
 	return fills, nil
+}
+
+func (s *PaperLifecycleSession) markKLineProcessed(kline types.KLine, requestedSymbol string, requestedInterval types.Interval) (bool, time.Time, error) {
+	if !kline.Closed {
+		return false, time.Time{}, nil
+	}
+
+	symbol := NormalizeSymbol(kline.Symbol)
+	if symbol == "" {
+		symbol = NormalizeSymbol(requestedSymbol)
+	}
+	if symbol == "" {
+		return false, time.Time{}, fmt.Errorf("HTX paper kline symbol is empty")
+	}
+
+	interval := kline.Interval
+	if interval == "" {
+		interval = requestedInterval
+	}
+	if interval == "" {
+		return false, time.Time{}, fmt.Errorf("HTX paper kline interval is empty")
+	}
+
+	barEnd := kline.EndTime.Time().UTC()
+	if barEnd.IsZero() {
+		return false, time.Time{}, fmt.Errorf("HTX paper kline %q %s has empty closed-bar end time", symbol, interval)
+	}
+
+	key := paperBarCursorKey{symbol: symbol, interval: interval}
+	if processed, ok := s.processed[key]; ok && !barEnd.After(processed) {
+		return false, barEnd, nil
+	}
+	s.processed[key] = barEnd
+	return true, barEnd, nil
 }
 
 func (s *PaperLifecycleSession) fillOrder(order types.Order, kline types.KLine) (types.Trade, error) {
