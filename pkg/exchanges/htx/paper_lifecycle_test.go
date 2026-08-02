@@ -148,6 +148,76 @@ func TestPaperLifecycleDoesNotFillReplayedProcessedBar(t *testing.T) {
 	}
 }
 
+func TestPaperLifecycleDoesNotConsumeCursorWhenFillFails(t *testing.T) {
+	ctx := context.Background()
+	start := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	session := newTestPaperLifecycleSession(t)
+
+	ack, err := session.SubmitOrder(ctx, paperLimitOrder("retry-after-fill-error", types.SideTypeBuy, "0.05", "67820"))
+	if err != nil {
+		t.Fatalf("SubmitOrder returned error: %v", err)
+	}
+	beforeBalances := sessionMustBalances(t, session)
+	beforeLedger := session.Ledger()
+
+	corrupted := beforeBalances["USDT"]
+	corrupted.Locked = fixedpoint.Zero
+	session.balances["USDT"] = corrupted
+
+	fills, err := session.AdvanceKLines(ctx, "BTCUSDT", types.Interval1m, types.KLineQueryOptions{
+		StartTime: &start,
+		Limit:     1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "would make USDT balance negative") {
+		t.Fatalf("AdvanceKLines error = %v, want injected locked-balance failure", err)
+	}
+	if len(fills) != 0 {
+		t.Fatalf("fills after failed attempt = %#v, want none", fills)
+	}
+	if len(session.processed) != 0 {
+		t.Fatalf("processed cursor = %#v, want no committed cursor after fill error", session.processed)
+	}
+	if after := session.Ledger(); !reflect.DeepEqual(after, beforeLedger) {
+		t.Fatalf("ledger changed after failed attempt:\nbefore=%#v\nafter=%#v", beforeLedger, after)
+	}
+
+	session.balances = copyPaperBalances(beforeBalances)
+	fills, err = session.AdvanceKLines(ctx, "BTCUSDT", types.Interval1m, types.KLineQueryOptions{
+		StartTime: &start,
+		Limit:     1,
+	})
+	if err != nil {
+		t.Fatalf("retry AdvanceKLines returned error: %v", err)
+	}
+	if len(fills) != 1 {
+		t.Fatalf("retry fills = %#v, want exactly one fill", fills)
+	}
+	if fills[0].OrderID != 1 {
+		t.Fatalf("fill order id = %d, want 1", fills[0].OrderID)
+	}
+	order := sessionMustOrder(t, session, ack.OrderID)
+	if order.Status != types.OrderStatusFilled || order.ExecutedQuantity.String() != "0.05" {
+		t.Fatalf("order after retry = %#v, want filled once", order)
+	}
+	if trades := sessionMustTrades(t, session, ack.OrderID); len(trades) != 1 {
+		t.Fatalf("order trades after retry = %#v, want one trade", trades)
+	}
+
+	afterRetryBalances := sessionMustBalances(t, session)
+	afterRetryLedger := session.Ledger()
+	fills, err = session.AdvanceKLines(ctx, "BTCUSDT", types.Interval1m, types.KLineQueryOptions{
+		StartTime: &start,
+		Limit:     1,
+	})
+	if err != nil {
+		t.Fatalf("duplicate AdvanceKLines returned error: %v", err)
+	}
+	if len(fills) != 0 {
+		t.Fatalf("duplicate fills = %#v, want none after cursor commit", fills)
+	}
+	assertPaperLifecycleNoMutation(t, session, afterRetryBalances, afterRetryLedger)
+}
+
 func TestPaperLifecycleFailsClosed(t *testing.T) {
 	t.Run("unsupported live mode", func(t *testing.T) {
 		_, err := NewPaperLifecycleSession(context.Background(), Config{Mode: Mode("live")}, newTestReplayMarketData(t))

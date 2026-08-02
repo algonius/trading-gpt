@@ -327,7 +327,7 @@ func (s *PaperLifecycleSession) AdvanceKLines(ctx context.Context, symbol string
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		process, barEnd, err := s.markKLineProcessed(kline, symbol, interval)
+		key, barEnd, process, err := s.nextKLineCursor(kline, symbol, interval)
 		if err != nil {
 			return nil, err
 		}
@@ -338,6 +338,7 @@ func (s *PaperLifecycleSession) AdvanceKLines(ctx context.Context, symbol string
 		if err != nil {
 			return nil, err
 		}
+		s.markKLineProcessed(key, barEnd)
 		fills = append(fills, trades...)
 	}
 	return fills, nil
@@ -471,9 +472,9 @@ func (s *PaperLifecycleSession) advanceKLine(kline types.KLine, barEnd time.Time
 	return fills, nil
 }
 
-func (s *PaperLifecycleSession) markKLineProcessed(kline types.KLine, requestedSymbol string, requestedInterval types.Interval) (bool, time.Time, error) {
+func (s *PaperLifecycleSession) nextKLineCursor(kline types.KLine, requestedSymbol string, requestedInterval types.Interval) (paperBarCursorKey, time.Time, bool, error) {
 	if !kline.Closed {
-		return false, time.Time{}, nil
+		return paperBarCursorKey{}, time.Time{}, false, nil
 	}
 
 	symbol := NormalizeSymbol(kline.Symbol)
@@ -481,7 +482,7 @@ func (s *PaperLifecycleSession) markKLineProcessed(kline types.KLine, requestedS
 		symbol = NormalizeSymbol(requestedSymbol)
 	}
 	if symbol == "" {
-		return false, time.Time{}, fmt.Errorf("HTX paper kline symbol is empty")
+		return paperBarCursorKey{}, time.Time{}, false, fmt.Errorf("HTX paper kline symbol is empty")
 	}
 
 	interval := kline.Interval
@@ -489,20 +490,23 @@ func (s *PaperLifecycleSession) markKLineProcessed(kline types.KLine, requestedS
 		interval = requestedInterval
 	}
 	if interval == "" {
-		return false, time.Time{}, fmt.Errorf("HTX paper kline interval is empty")
+		return paperBarCursorKey{}, time.Time{}, false, fmt.Errorf("HTX paper kline interval is empty")
 	}
 
 	barEnd := kline.EndTime.Time().UTC()
 	if barEnd.IsZero() {
-		return false, time.Time{}, fmt.Errorf("HTX paper kline %q %s has empty closed-bar end time", symbol, interval)
+		return paperBarCursorKey{}, time.Time{}, false, fmt.Errorf("HTX paper kline %q %s has empty closed-bar end time", symbol, interval)
 	}
 
 	key := paperBarCursorKey{symbol: symbol, interval: interval}
 	if processed, ok := s.processed[key]; ok && !barEnd.After(processed) {
-		return false, barEnd, nil
+		return key, barEnd, false, nil
 	}
+	return key, barEnd, true, nil
+}
+
+func (s *PaperLifecycleSession) markKLineProcessed(key paperBarCursorKey, barEnd time.Time) {
 	s.processed[key] = barEnd
-	return true, barEnd, nil
 }
 
 func (s *PaperLifecycleSession) fillOrder(order types.Order, kline types.KLine) (types.Trade, error) {
