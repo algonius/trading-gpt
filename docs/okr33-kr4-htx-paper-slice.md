@@ -72,3 +72,21 @@ Explicitly out of scope:
 - Add an HTTP client only after a separate safety review defines unauthenticated public-data call limits and fixtures.
 - Define paper order lifecycle semantics separately from live HTX order APIs.
 - Resolve root repository license metadata risk before distribution or deployment beyond approved internal paper work.
+
+## Paper Lifecycle Follow-Up
+
+Date: 2026-08-02 SGT
+
+The next bounded slice adds a credential-free `PaperLifecycleSession` that composes the existing `MarketData` interface with an in-memory paper account/order ledger. The replay tests cover submit, cancel, deterministic kline-triggered fills, fee debits, order states, closed-trade PnL, and exact ledger reconciliation with zero drift.
+
+Retained boundaries:
+
+- no `PrivateSession`, signer, private client, authenticated HTTP, env credential loading, exchange account access, or live order path;
+- paper/replay modes only through the existing fail-closed config normalization;
+- spot limit orders only, with invalid price/quantity precision and margin side effects rejected.
+
+Residual gaps before 100-closed-trade evidence can be claimed:
+
+- the ledger is in-memory only; append-only file persistence/export is still needed for retained evidence artifacts;
+- fill semantics are deterministic full fills on crossed closed klines, with no partial-fill, spread, depth, or slippage model yet;
+- there is no committed 100-trade replay harness or fixture set yet.
