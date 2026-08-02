@@ -221,6 +221,9 @@ func AppendPaperLifecycleEvidenceJSONL(sink PaperLifecycleEvidenceJSONLSink, ses
 	if err != nil {
 		return err
 	}
+	if len(line)+1 > MaxPaperLifecycleEvidenceJSONLRecordBytes {
+		return fmt.Errorf("HTX paper lifecycle evidence JSONL record exceeds %d bytes", MaxPaperLifecycleEvidenceJSONLRecordBytes)
+	}
 	line = append(line, '\n')
 
 	start := sink.Len()

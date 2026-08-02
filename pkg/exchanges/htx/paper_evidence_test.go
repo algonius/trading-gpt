@@ -121,6 +121,26 @@ func TestPaperLifecycleEvidenceJSONLAppendAndRead(t *testing.T) {
 	}
 }
 
+func TestPaperLifecycleEvidenceJSONLAppendAcceptsMaxReadableRecord(t *testing.T) {
+	var buf bytes.Buffer
+	session := completedTestPaperLifecycleSessionWithJSONLRecordSize(t, MaxPaperLifecycleEvidenceJSONLRecordBytes)
+
+	if err := AppendPaperLifecycleEvidenceJSONL(&buf, session); err != nil {
+		t.Fatalf("AppendPaperLifecycleEvidenceJSONL returned error: %v", err)
+	}
+	if buf.Len() != MaxPaperLifecycleEvidenceJSONLRecordBytes {
+		t.Fatalf("JSONL record size = %d, want exact bound %d", buf.Len(), MaxPaperLifecycleEvidenceJSONLRecordBytes)
+	}
+
+	records, err := ReadPaperLifecycleEvidenceJSONL(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("ReadPaperLifecycleEvidenceJSONL returned error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+}
+
 func TestPaperLifecycleEvidenceFailsClosed(t *testing.T) {
 	t.Run("non-zero drift", func(t *testing.T) {
 		session := completedTestPaperLifecycleSession(t)
@@ -243,6 +263,30 @@ func TestPaperLifecycleEvidenceAppendDoesNotMutateOnFailure(t *testing.T) {
 		}
 		if len(records) != 2 {
 			t.Fatalf("records after short-write retry = %d, want one preexisting plus one retried record", len(records))
+		}
+	})
+
+	t.Run("oversize record fails before write", func(t *testing.T) {
+		sink := &rollbackEvidenceSink{limit: -1}
+		if err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSession(t)); err != nil {
+			t.Fatalf("initial append returned error: %v", err)
+		}
+		before := append([]byte(nil), sink.Bytes()...)
+
+		err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSessionWithJSONLRecordSize(t, MaxPaperLifecycleEvidenceJSONLRecordBytes+1))
+		if err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("append error = %v, want oversize failure", err)
+		}
+		if !bytes.Equal(sink.Bytes(), before) {
+			t.Fatalf("sink changed after oversize append:\nbefore=%s\nafter=%s", string(before), sink.String())
+		}
+
+		records, err := ReadPaperLifecycleEvidenceJSONL(bytes.NewReader(sink.Bytes()))
+		if err != nil {
+			t.Fatalf("ReadPaperLifecycleEvidenceJSONL returned error: %v", err)
+		}
+		if len(records) != 1 {
+			t.Fatalf("records after oversize append = %d, want only the preexisting record", len(records))
 		}
 	})
 }
@@ -380,6 +424,45 @@ func completedTestPaperLifecycleSession(t *testing.T) *PaperLifecycleSession {
 	}
 	if _, err := session.CancelOrder(ctx, cancelAck.OrderID); err != nil {
 		t.Fatalf("CancelOrder returned error: %v", err)
+	}
+	return session
+}
+
+func completedTestPaperLifecycleSessionWithJSONLRecordSize(t *testing.T, targetSize int) *PaperLifecycleSession {
+	t.Helper()
+
+	session := completedTestPaperLifecycleSession(t)
+	order := session.orders[1]
+	order.ClientOrderID = ""
+	session.orders[1] = order
+
+	evidence, err := ExportPaperLifecycleEvidence(session)
+	if err != nil {
+		t.Fatalf("ExportPaperLifecycleEvidence returned error: %v", err)
+	}
+	line, err := MarshalPaperLifecycleEvidenceJSON(evidence)
+	if err != nil {
+		t.Fatalf("MarshalPaperLifecycleEvidenceJSON returned error: %v", err)
+	}
+
+	baseSize := len(line) + 1
+	padding := targetSize - baseSize
+	if padding < 1 {
+		t.Fatalf("target JSONL record size %d leaves padding %d from base size %d", targetSize, padding, baseSize)
+	}
+
+	order.ClientOrderID = strings.Repeat("x", padding)
+	session.orders[1] = order
+	evidence, err = ExportPaperLifecycleEvidence(session)
+	if err != nil {
+		t.Fatalf("ExportPaperLifecycleEvidence(padded) returned error: %v", err)
+	}
+	line, err = MarshalPaperLifecycleEvidenceJSON(evidence)
+	if err != nil {
+		t.Fatalf("MarshalPaperLifecycleEvidenceJSON(padded) returned error: %v", err)
+	}
+	if got := len(line) + 1; got != targetSize {
+		t.Fatalf("padded JSONL record size = %d, want %d", got, targetSize)
 	}
 	return session
 }
