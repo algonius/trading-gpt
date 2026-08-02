@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -56,8 +57,14 @@ func TestPaperLifecycleEvidenceIsDeterministicAndCanonical(t *testing.T) {
 	if fees := evidenceAmounts(firstEvidence.Summary.Fees); fees["BTC"] != "0.00005" || fees["USDT"] != "3.3901065" {
 		t.Fatalf("fees = %#v, want BTC/USDT fee totals", fees)
 	}
-	if got := evidenceAmounts(firstEvidence.Summary.GrossClosedPnL)["USDT"]; got != "-0.8935" {
-		t.Fatalf("gross closed pnl USDT = %s, want -0.8935", got)
+	if got := evidenceAmounts(firstEvidence.Summary.EntryFees)["USDT"]; got != "3.391" {
+		t.Fatalf("entry fees USDT = %s, want 3.391", got)
+	}
+	if got := evidenceAmounts(firstEvidence.Summary.ExitFees)["USDT"]; got != "3.3901065" {
+		t.Fatalf("exit fees USDT = %s, want 3.3901065", got)
+	}
+	if got := evidenceAmounts(firstEvidence.Summary.GrossClosedPnL)["USDT"]; got != "2.4975" {
+		t.Fatalf("gross closed pnl USDT = %s, want 2.4975", got)
 	}
 	if got := evidenceAmounts(firstEvidence.Summary.NetClosedPnL)["USDT"]; got != "-4.2836065" {
 		t.Fatalf("net closed pnl USDT = %s, want -4.2836065", got)
@@ -75,8 +82,14 @@ func TestPaperLifecycleEvidenceIsDeterministicAndCanonical(t *testing.T) {
 	if len(firstEvidence.Ledger) != 8 || firstEvidence.Ledger[0].Sequence != 1 || firstEvidence.Ledger[7].Sequence != 8 {
 		t.Fatalf("ledger sequence = %#v, want contiguous 1..8", firstEvidence.Ledger)
 	}
-	if len(firstEvidence.ClosedTrades) != 1 || firstEvidence.ClosedTrades[0].NetPnL != "-4.2836065" {
+	if len(firstEvidence.ClosedTrades) != 1 {
 		t.Fatalf("closed trades = %#v, want one retained net PnL row", firstEvidence.ClosedTrades)
+	}
+	closed := firstEvidence.ClosedTrades[0]
+	if closed.EntryNotional != "3387.609" || closed.EntryFee != "3.391" || closed.EntryFeeCurrency != "USDT" ||
+		closed.ExitNotional != "3390.1065" || closed.GrossPnL != "2.4975" || closed.ExitFee != "3.3901065" ||
+		closed.ExitFeeCurrency != "USDT" || closed.NetPnL != "-4.2836065" {
+		t.Fatalf("closed trade = %#v, want exact fee-separated PnL decomposition", closed)
 	}
 	if len(firstEvidence.Reconciliation.Drift) != 0 {
 		t.Fatalf("drift = %#v, want zero drift", firstEvidence.Reconciliation.Drift)
@@ -172,28 +185,163 @@ func TestPaperLifecycleEvidenceAppendDoesNotMutateOnFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("failed writer", func(t *testing.T) {
-		writer := &failingEvidenceWriter{err: errors.New("injected write failure")}
-		err := AppendPaperLifecycleEvidenceJSONL(writer, completedTestPaperLifecycleSession(t))
-		if err == nil || !strings.Contains(err.Error(), "injected write failure") {
-			t.Fatalf("append error = %v, want injected write failure", err)
+	t.Run("partial write error rolls back", func(t *testing.T) {
+		sink := &rollbackEvidenceSink{limit: -1}
+		if err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSession(t)); err != nil {
+			t.Fatalf("initial append returned error: %v", err)
 		}
-		if writer.buf.Len() != 0 {
-			t.Fatalf("writer buffer = %q, want no partial record after failed write", writer.buf.String())
+		before := append([]byte(nil), sink.Bytes()...)
+
+		injected := errors.New("injected partial write failure")
+		sink.limit = 31
+		sink.err = injected
+		err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSession(t))
+		if !errors.Is(err, injected) {
+			t.Fatalf("append error = %v, want injected partial write failure", err)
+		}
+		if !bytes.Equal(sink.Bytes(), before) {
+			t.Fatalf("sink changed after partial write error:\nbefore=%s\nafter=%s", string(before), sink.String())
 		}
 
-		writer.err = nil
-		if err := AppendPaperLifecycleEvidenceJSONL(writer, completedTestPaperLifecycleSession(t)); err != nil {
+		sink.limit = -1
+		sink.err = nil
+		if err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSession(t)); err != nil {
 			t.Fatalf("retry append returned error: %v", err)
 		}
-		records, err := ReadPaperLifecycleEvidenceJSONL(bytes.NewReader(writer.buf.Bytes()))
+		records, err := ReadPaperLifecycleEvidenceJSONL(bytes.NewReader(sink.Bytes()))
 		if err != nil {
 			t.Fatalf("ReadPaperLifecycleEvidenceJSONL returned error: %v", err)
 		}
-		if len(records) != 1 {
-			t.Fatalf("records after failed-write retry = %d, want exactly one", len(records))
+		if len(records) != 2 {
+			t.Fatalf("records after partial-write retry = %d, want one preexisting plus one retried record", len(records))
 		}
 	})
+
+	t.Run("short write rolls back", func(t *testing.T) {
+		sink := &rollbackEvidenceSink{limit: -1}
+		if err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSession(t)); err != nil {
+			t.Fatalf("initial append returned error: %v", err)
+		}
+		before := append([]byte(nil), sink.Bytes()...)
+
+		sink.limit = 47
+		err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSession(t))
+		if !errors.Is(err, io.ErrShortWrite) {
+			t.Fatalf("append error = %v, want short write", err)
+		}
+		if !bytes.Equal(sink.Bytes(), before) {
+			t.Fatalf("sink changed after short write:\nbefore=%s\nafter=%s", string(before), sink.String())
+		}
+
+		sink.limit = -1
+		if err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSession(t)); err != nil {
+			t.Fatalf("retry append returned error: %v", err)
+		}
+		records, err := ReadPaperLifecycleEvidenceJSONL(bytes.NewReader(sink.Bytes()))
+		if err != nil {
+			t.Fatalf("ReadPaperLifecycleEvidenceJSONL returned error: %v", err)
+		}
+		if len(records) != 2 {
+			t.Fatalf("records after short-write retry = %d, want one preexisting plus one retried record", len(records))
+		}
+	})
+}
+
+func TestPaperLifecycleEvidenceJSONLRejectsInvalidRecords(t *testing.T) {
+	valid := mustPaperLifecycleEvidence(t)
+	malformed := valid
+	malformed.Orders[0].Price = "not-a-number"
+
+	missingRequired := valid
+	missingRequired.Exchange = ""
+
+	cases := []struct {
+		name string
+		line []byte
+		want string
+	}{
+		{
+			name: "empty object",
+			line: []byte(`{}`),
+			want: "unsupported",
+		},
+		{
+			name: "unknown version",
+			line: []byte(`{"version":999}`),
+			want: "unsupported",
+		},
+		{
+			name: "unknown record field",
+			line: []byte(`{"version":1,"record_type":"unexpected","exchange":"htx","mode":"replay"}`),
+			want: "unknown field",
+		},
+		{
+			name: "invalid mode",
+			line: mustPaperLifecycleEvidenceJSON(t, func(e PaperLifecycleEvidence) PaperLifecycleEvidence {
+				e.Mode = "live"
+				return e
+			}),
+			want: "mode",
+		},
+		{
+			name: "missing required field",
+			line: mustMarshalPaperLifecycleEvidence(t, missingRequired),
+			want: "exchange",
+		},
+		{
+			name: "malformed required amount",
+			line: mustMarshalPaperLifecycleEvidence(t, malformed),
+			want: "orders[0].price",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ReadPaperLifecycleEvidenceJSONL(bytes.NewReader(append(append([]byte(nil), tc.line...), '\n')))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ReadPaperLifecycleEvidenceJSONL error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPaperLifecycleEvidenceJSONLReaderAcceptsRecordOverScannerLimit(t *testing.T) {
+	line := mustPaperLifecycleEvidenceJSON(t, func(e PaperLifecycleEvidence) PaperLifecycleEvidence {
+		e.Orders[0].ClientOrderID = strings.Repeat("x", 70*1024)
+		return e
+	})
+	if len(line) <= 64*1024 {
+		t.Fatalf("record length = %d, want larger than scanner default token limit", len(line))
+	}
+	if len(line) >= MaxPaperLifecycleEvidenceJSONLRecordBytes {
+		t.Fatalf("record length = %d, want below explicit record bound", len(line))
+	}
+
+	records, err := ReadPaperLifecycleEvidenceJSONL(bytes.NewReader(append(append([]byte(nil), line...), '\n')))
+	if err != nil {
+		t.Fatalf("ReadPaperLifecycleEvidenceJSONL returned error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	if got := records[0].Orders[0].ClientOrderID; got != strings.Repeat("x", 70*1024) {
+		t.Fatalf("large client_order_id length = %d, want retained", len(got))
+	}
+}
+
+func TestPaperLifecycleEvidenceJSONLReaderRejectsOversizeRecord(t *testing.T) {
+	line := mustPaperLifecycleEvidenceJSON(t, func(e PaperLifecycleEvidence) PaperLifecycleEvidence {
+		e.Orders[0].ClientOrderID = strings.Repeat("x", MaxPaperLifecycleEvidenceJSONLRecordBytes)
+		return e
+	})
+	if len(line) <= MaxPaperLifecycleEvidenceJSONLRecordBytes {
+		t.Fatalf("record length = %d, want larger than explicit record bound", len(line))
+	}
+
+	_, err := ReadPaperLifecycleEvidenceJSONL(bytes.NewReader(append(append([]byte(nil), line...), '\n')))
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("ReadPaperLifecycleEvidenceJSONL error = %v, want oversize failure", err)
+	}
 }
 
 func completedTestPaperLifecycleSession(t *testing.T) *PaperLifecycleSession {
@@ -244,14 +392,52 @@ func evidenceAmounts(values []PaperEvidenceCurrencyAmount) map[string]string {
 	return out
 }
 
-type failingEvidenceWriter struct {
-	buf bytes.Buffer
-	err error
+func mustPaperLifecycleEvidence(t *testing.T) PaperLifecycleEvidence {
+	t.Helper()
+
+	evidence, err := ExportPaperLifecycleEvidence(completedTestPaperLifecycleSession(t))
+	if err != nil {
+		t.Fatalf("ExportPaperLifecycleEvidence returned error: %v", err)
+	}
+	return evidence
 }
 
-func (w *failingEvidenceWriter) Write(p []byte) (int, error) {
-	if w.err != nil {
-		return 0, w.err
+func mustPaperLifecycleEvidenceJSON(t *testing.T, mutate func(PaperLifecycleEvidence) PaperLifecycleEvidence) []byte {
+	t.Helper()
+
+	evidence := mustPaperLifecycleEvidence(t)
+	if mutate != nil {
+		evidence = mutate(evidence)
 	}
-	return w.buf.Write(p)
+	return mustMarshalPaperLifecycleEvidence(t, evidence)
+}
+
+func mustMarshalPaperLifecycleEvidence(t *testing.T, evidence PaperLifecycleEvidence) []byte {
+	t.Helper()
+
+	out, err := MarshalPaperLifecycleEvidenceJSON(evidence)
+	if err != nil {
+		t.Fatalf("MarshalPaperLifecycleEvidenceJSON returned error: %v", err)
+	}
+	return out
+}
+
+type rollbackEvidenceSink struct {
+	bytes.Buffer
+	limit int
+	err   error
+}
+
+func (s *rollbackEvidenceSink) Write(p []byte) (int, error) {
+	if s.limit >= 0 {
+		n := s.limit
+		if n > len(p) {
+			n = len(p)
+		}
+		if n > 0 {
+			_, _ = s.Buffer.Write(p[:n])
+		}
+		return n, s.err
+	}
+	return s.Buffer.Write(p)
 }

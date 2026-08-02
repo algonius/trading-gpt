@@ -99,10 +99,13 @@ The retained-evidence slice adds a canonical versioned JSON export for one compl
 
 Retained scope:
 
-- deterministic JSON and JSONL helpers over injected writers/readers;
+- deterministic JSON and rollback-capable JSONL append helpers over injected sinks/readers;
 - sorted map-backed balances, orders, and trades, contiguous ledger-sequence enforcement, sorted closed trades;
 - fail-closed export on non-zero drift, locked funds, incomplete/working orders, missing orders, or missing closed trades;
+- strict JSONL readback that validates version, exchange, mode, required fields, and an explicit bounded record size;
 - no wall-clock-only evidence fields: `exported_at` comes from the injected paper lifecycle clock.
+
+Closed-trade evidence separates price PnL from fees. `entry_notional` is the matched gross entry cost for the retained closed quantity, base-denominated entry fees are valued in quote currency at the entry price, `gross_pnl` is `exit_notional - entry_notional`, and `net_pnl` deducts both entry and exit fees.
 
 Remaining gaps:
 

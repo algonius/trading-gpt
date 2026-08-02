@@ -62,17 +62,19 @@ type PaperLedgerEntry struct {
 }
 
 type PaperClosedTrade struct {
-	ID            uint64
-	Symbol        string
-	EntryOrderID  uint64
-	ExitOrderID   uint64
-	Quantity      fixedpoint.Value
-	EntryNotional fixedpoint.Value
-	ExitNotional  fixedpoint.Value
-	ExitFee       fixedpoint.Value
-	FeeCurrency   string
-	RealizedPnL   fixedpoint.Value
-	ClosedAt      time.Time
+	ID               uint64
+	Symbol           string
+	EntryOrderID     uint64
+	ExitOrderID      uint64
+	Quantity         fixedpoint.Value
+	EntryNotional    fixedpoint.Value
+	EntryFee         fixedpoint.Value
+	EntryFeeCurrency string
+	ExitNotional     fixedpoint.Value
+	ExitFee          fixedpoint.Value
+	ExitFeeCurrency  string
+	RealizedPnL      fixedpoint.Value
+	ClosedAt         time.Time
 }
 
 type PaperLedgerReconciliation struct {
@@ -83,9 +85,11 @@ type PaperLedgerReconciliation struct {
 }
 
 type paperPositionLot struct {
-	orderID  uint64
-	quantity fixedpoint.Value
-	cost     fixedpoint.Value
+	orderID          uint64
+	quantity         fixedpoint.Value
+	entryNotional    fixedpoint.Value
+	entryFee         fixedpoint.Value
+	entryFeeCurrency string
 }
 
 type paperBarCursorKey struct {
@@ -556,10 +560,14 @@ func (s *PaperLifecycleSession) fillOrder(order types.Order, kline types.KLine) 
 		if err := s.applyBalanceDelta(PaperLedgerFillCredit, order.OrderID, tradeID, fillTime, market.BaseCurrency, netQuantity, fixedpoint.Zero); err != nil {
 			return types.Trade{}, err
 		}
+		// Buy fees are debited in base currency, so value them at the matched entry price for quote-currency PnL.
+		entryFeeValue := price.Mul(fee)
 		s.positions[trade.Symbol] = append(s.positions[trade.Symbol], paperPositionLot{
-			orderID:  order.OrderID,
-			quantity: netQuantity,
-			cost:     notional,
+			orderID:          order.OrderID,
+			quantity:         netQuantity,
+			entryNotional:    price.Mul(netQuantity),
+			entryFee:         entryFeeValue,
+			entryFeeCurrency: market.QuoteCurrency,
 		})
 
 	case types.SideTypeSell:
@@ -607,9 +615,11 @@ func (s *PaperLifecycleSession) closePositionLots(trade types.Trade, exitFee fix
 		if lot.quantity.Compare(closeQuantity) < 0 {
 			closeQuantity = lot.quantity
 		}
-		allocatedCost := lot.cost
+		allocatedEntryNotional := lot.entryNotional
+		allocatedEntryFee := lot.entryFee
 		if closeQuantity.Compare(lot.quantity) < 0 {
-			allocatedCost = lot.cost.Mul(closeQuantity).Div(lot.quantity)
+			allocatedEntryNotional = lot.entryNotional.Mul(closeQuantity).Div(lot.quantity)
+			allocatedEntryFee = lot.entryFee.Mul(closeQuantity).Div(lot.quantity)
 		}
 		exitNotional := trade.Price.Mul(closeQuantity)
 		allocatedFee := exitFee
@@ -618,22 +628,25 @@ func (s *PaperLifecycleSession) closePositionLots(trade types.Trade, exitFee fix
 		}
 
 		s.closed = append(s.closed, PaperClosedTrade{
-			ID:            s.nextClosed,
-			Symbol:        trade.Symbol,
-			EntryOrderID:  lot.orderID,
-			ExitOrderID:   trade.OrderID,
-			Quantity:      closeQuantity,
-			EntryNotional: allocatedCost,
-			ExitNotional:  exitNotional,
-			ExitFee:       allocatedFee,
-			FeeCurrency:   trade.FeeCurrency,
-			RealizedPnL:   exitNotional.Sub(allocatedFee).Sub(allocatedCost),
-			ClosedAt:      trade.Time.Time(),
+			ID:               s.nextClosed,
+			Symbol:           trade.Symbol,
+			EntryOrderID:     lot.orderID,
+			ExitOrderID:      trade.OrderID,
+			Quantity:         closeQuantity,
+			EntryNotional:    allocatedEntryNotional,
+			EntryFee:         allocatedEntryFee,
+			EntryFeeCurrency: lot.entryFeeCurrency,
+			ExitNotional:     exitNotional,
+			ExitFee:          allocatedFee,
+			ExitFeeCurrency:  trade.FeeCurrency,
+			RealizedPnL:      exitNotional.Sub(allocatedFee).Sub(allocatedEntryNotional).Sub(allocatedEntryFee),
+			ClosedAt:         trade.Time.Time(),
 		})
 		s.nextClosed++
 
 		lot.quantity = lot.quantity.Sub(closeQuantity)
-		lot.cost = lot.cost.Sub(allocatedCost)
+		lot.entryNotional = lot.entryNotional.Sub(allocatedEntryNotional)
+		lot.entryFee = lot.entryFee.Sub(allocatedEntryFee)
 		remaining = remaining.Sub(closeQuantity)
 		if lot.quantity.Sign() > 0 {
 			kept = append(kept, lot)

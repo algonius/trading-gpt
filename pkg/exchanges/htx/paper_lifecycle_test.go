@@ -38,8 +38,9 @@ func TestPaperLifecycleReplayLedgerIsDeterministicAndReconciles(t *testing.T) {
 	if closed.RealizedPnL.String() != "-4.2836065" {
 		t.Fatalf("closed trade pnl = %s, want -4.2836065", closed.RealizedPnL.String())
 	}
-	if closed.EntryNotional.String() != "3391" || closed.ExitNotional.String() != "3390.1065" || closed.ExitFee.String() != "3.3901065" {
-		t.Fatalf("closed trade economics = %#v, want exact entry/exit/fee", closed)
+	if closed.EntryNotional.String() != "3387.609" || closed.EntryFee.String() != "3.391" || closed.EntryFeeCurrency != "USDT" ||
+		closed.ExitNotional.String() != "3390.1065" || closed.ExitFee.String() != "3.3901065" || closed.ExitFeeCurrency != "USDT" {
+		t.Fatalf("closed trade economics = %#v, want exact fee-separated entry/exit economics", closed)
 	}
 
 	buyOrder := first.Orders["1"]
