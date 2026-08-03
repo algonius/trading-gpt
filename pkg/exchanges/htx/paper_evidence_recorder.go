@@ -147,11 +147,11 @@ func (r *PaperLifecycleEvidenceRecorder) Record(session *PaperLifecycleSession, 
 		if existing.RunID != record.RunID {
 			continue
 		}
-		existingLine, err := marshalPaperLifecycleRecordedRunJSONLRecord(existing)
+		equivalent, err := paperLifecycleRecordedRunsDuplicateEquivalent(existing, record)
 		if err != nil {
 			return false, err
 		}
-		if bytes.Equal(existingLine, line) {
+		if equivalent {
 			return false, nil
 		}
 		return false, fmt.Errorf("HTX paper lifecycle evidence run %s already exists with different evidence", record.RunID)
@@ -275,13 +275,17 @@ func (r *PaperLifecycleEvidenceRecorder) readRunsLocked() ([]PaperLifecycleRecor
 		if !bytes.Equal(line, canonical) {
 			return nil, fmt.Errorf("HTX paper lifecycle evidence recorder found non-canonical record %s", record.RunID)
 		}
+		equivalence, err := paperLifecycleRecordedRunDuplicateEquivalenceBytes(record)
+		if err != nil {
+			return nil, err
+		}
 		if existing, ok := seen[record.RunID]; ok {
-			if bytes.Equal(existing, canonical) {
+			if bytes.Equal(existing, equivalence) {
 				continue
 			}
 			return nil, fmt.Errorf("HTX paper lifecycle evidence recorder found conflicting duplicate run %s", record.RunID)
 		}
-		seen[record.RunID] = canonical
+		seen[record.RunID] = equivalence
 		records = append(records, record)
 	}
 	return records, nil
@@ -333,6 +337,33 @@ func decodePaperLifecycleRecordedRunJSONLRecord(line []byte) (PaperLifecycleReco
 		return PaperLifecycleRecordedRun{}, err
 	}
 	return record, nil
+}
+
+func paperLifecycleRecordedRunsDuplicateEquivalent(a PaperLifecycleRecordedRun, b PaperLifecycleRecordedRun) (bool, error) {
+	aLine, err := paperLifecycleRecordedRunDuplicateEquivalenceBytes(a)
+	if err != nil {
+		return false, err
+	}
+	bLine, err := paperLifecycleRecordedRunDuplicateEquivalenceBytes(b)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(aLine, bLine), nil
+}
+
+func paperLifecycleRecordedRunDuplicateEquivalenceBytes(record PaperLifecycleRecordedRun) ([]byte, error) {
+	if err := validatePaperLifecycleRecordedRun(record); err != nil {
+		return nil, err
+	}
+	record.Evidence.ExportedAt = ""
+	line, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+	if len(line)+1 > MaxPaperLifecycleEvidenceJSONLRecordBytes {
+		return nil, fmt.Errorf("HTX paper lifecycle evidence recorder JSONL record exceeds %d bytes", MaxPaperLifecycleEvidenceJSONLRecordBytes)
+	}
+	return line, nil
 }
 
 func validatePaperLifecycleRecordedRun(record PaperLifecycleRecordedRun) error {

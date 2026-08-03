@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPaperLifecycleEvidenceRecorderSuppressesRestartDuplicate(t *testing.T) {
@@ -49,6 +50,48 @@ func TestPaperLifecycleEvidenceRecorderSuppressesRestartDuplicate(t *testing.T) 
 	}
 	if readback.Runs[0].RunInput != input {
 		t.Fatalf("retained run input = %#v, want %#v", readback.Runs[0].RunInput, input)
+	}
+}
+
+func TestPaperLifecycleEvidenceRecorderIgnoresExportedAtOnlyForRestartDuplicate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cumulative-evidence.jsonl")
+	recorder := mustPaperLifecycleEvidenceRecorder(t, path, testPaperLifecycleEvidenceSource())
+	session := completedTestPaperLifecycleSessionWithFirstClientOrderID(t, "buy-open-exported-at-retry")
+	input := testPaperLifecycleEvidenceRunInput("run-exported-at-retry")
+
+	firstExport := time.Date(2026, 8, 3, 14, 0, 0, 0, time.UTC)
+	session.now = func() time.Time { return firstExport }
+	committed, err := recorder.Record(session, input)
+	if err != nil {
+		t.Fatalf("Record initial returned error: %v", err)
+	}
+	if !committed {
+		t.Fatalf("initial Record committed = false, want true")
+	}
+	before := mustReadFile(t, path)
+
+	secondExport := time.Date(2026, 8, 3, 14, 5, 0, 0, time.UTC)
+	session.now = func() time.Time { return secondExport }
+	committed, err = recorder.Record(session, input)
+	if err != nil {
+		t.Fatalf("Record exported_at-only retry returned error: %v", err)
+	}
+	if committed {
+		t.Fatalf("exported_at-only retry committed = true, want false")
+	}
+	if after := mustReadFile(t, path); !bytes.Equal(after, before) {
+		t.Fatalf("file changed after exported_at-only retry:\nbefore=%s\nafter=%s", string(before), string(after))
+	}
+
+	readback, err := recorder.ReadCumulative()
+	if err != nil {
+		t.Fatalf("ReadCumulative returned error: %v", err)
+	}
+	if readback.RunCount != 1 || len(readback.Runs) != 1 {
+		t.Fatalf("readback run count = %d/%d, want 1", readback.RunCount, len(readback.Runs))
+	}
+	if readback.Runs[0].Evidence.ExportedAt != formatPaperEvidenceTime(firstExport) {
+		t.Fatalf("retained exported_at = %s, want first committed export time", readback.Runs[0].Evidence.ExportedAt)
 	}
 }
 
