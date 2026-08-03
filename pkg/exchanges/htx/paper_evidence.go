@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -205,7 +206,7 @@ func MarshalPaperLifecycleEvidenceJSON(evidence PaperLifecycleEvidence) ([]byte,
 type PaperLifecycleEvidenceJSONLSink interface {
 	io.Writer
 	Len() int
-	Truncate(n int)
+	Truncate(n int) error
 }
 
 func AppendPaperLifecycleEvidenceJSONL(sink PaperLifecycleEvidenceJSONLSink, session *PaperLifecycleSession) error {
@@ -217,23 +218,37 @@ func AppendPaperLifecycleEvidenceJSONL(sink PaperLifecycleEvidenceJSONLSink, ses
 	if err != nil {
 		return err
 	}
-	line, err := MarshalPaperLifecycleEvidenceJSON(evidence)
+	line, err := marshalPaperLifecycleEvidenceJSONLRecord(evidence)
 	if err != nil {
 		return err
 	}
-	if len(line)+1 > MaxPaperLifecycleEvidenceJSONLRecordBytes {
-		return fmt.Errorf("HTX paper lifecycle evidence JSONL record exceeds %d bytes", MaxPaperLifecycleEvidenceJSONLRecordBytes)
-	}
-	line = append(line, '\n')
+	return appendPaperLifecycleEvidenceJSONLRecord(sink, line)
+}
 
+func marshalPaperLifecycleEvidenceJSONLRecord(evidence PaperLifecycleEvidence) ([]byte, error) {
+	line, err := MarshalPaperLifecycleEvidenceJSON(evidence)
+	if err != nil {
+		return nil, err
+	}
+	if len(line)+1 > MaxPaperLifecycleEvidenceJSONLRecordBytes {
+		return nil, fmt.Errorf("HTX paper lifecycle evidence JSONL record exceeds %d bytes", MaxPaperLifecycleEvidenceJSONLRecordBytes)
+	}
+	return append(line, '\n'), nil
+}
+
+func appendPaperLifecycleEvidenceJSONLRecord(sink PaperLifecycleEvidenceJSONLSink, line []byte) error {
 	start := sink.Len()
 	n, err := sink.Write(line)
 	if err != nil {
-		sink.Truncate(start)
+		if rollbackErr := sink.Truncate(start); rollbackErr != nil {
+			return fmt.Errorf("HTX paper lifecycle evidence JSONL rollback failed: %w", errors.Join(err, rollbackErr))
+		}
 		return err
 	}
 	if n != len(line) {
-		sink.Truncate(start)
+		if rollbackErr := sink.Truncate(start); rollbackErr != nil {
+			return fmt.Errorf("HTX paper lifecycle evidence JSONL rollback failed: %w", errors.Join(io.ErrShortWrite, rollbackErr))
+		}
 		return io.ErrShortWrite
 	}
 	return nil

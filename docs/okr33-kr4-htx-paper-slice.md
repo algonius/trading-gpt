@@ -112,3 +112,24 @@ Remaining gaps:
 - this is still an in-memory session export helper, not a durable file/DB retention service;
 - evidence covers the bounded one-closed-trade replay fixture path only and does not claim KR5 or 100 closed trades;
 - fill modeling remains deterministic crossed closed-kline full fills without depth, partial-fill, spread, or slippage modeling.
+
+## Durable Evidence Store Follow-Up
+
+Date: 2026-08-03 SGT
+
+The next bounded retained-evidence slice adds a path-scoped `PaperLifecycleEvidenceFileStore` for paper/replay lifecycle evidence. It appends only records that satisfy the same strict JSONL contract as the in-memory helper: versioned identity, required-field validation, fee-separated gross/net PnL, rollback on failed writes, and the shared 1 MiB record limit including the trailing newline.
+
+Retained scope:
+
+- file-backed append and restart readback for JSONL evidence records;
+- complete read/deduplicate/append/sync serialization per canonical path inside one process;
+- exact-record duplicate retry handling so a restarted retry does not append the same deterministic record twice;
+- fail-closed readback for corrupt or truncated tails instead of silently skipping bad data;
+- preservation of already committed records when a later append fails before commit.
+
+Remaining gaps:
+
+- this is storage/recovery infrastructure only and does not fabricate or claim cumulative KR5 PnL evidence;
+- evidence still covers the bounded replay fixture path and does not claim 100 closed trades;
+- the file store does not provide multi-process locking; multiple processes must use an external coordinator or separate files;
+- no private/authenticated account, live exchange, credential, funding, or factory wiring is introduced.
