@@ -2,6 +2,7 @@ package htx
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/c9s/bbgo/pkg/fixedpoint"
+	"github.com/c9s/bbgo/pkg/types"
 )
 
 func TestPaperLifecycleEvidenceRecorderSuppressesRestartDuplicate(t *testing.T) {
@@ -141,6 +145,62 @@ func TestPaperLifecycleEvidenceRecorderAggregatesDistinctRuns(t *testing.T) {
 		t.Fatalf("ReadCumulative returned error: %v", err)
 	}
 	assertTwoRunPaperLifecycleAggregate(t, readback)
+}
+
+func TestPaperLifecycleEvidenceRecorderCountsPartialOpenResidualLot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cumulative-evidence.jsonl")
+	recorder := mustPaperLifecycleEvidenceRecorder(t, path, testPaperLifecycleEvidenceSource())
+	session := completedTestPaperLifecycleSessionWithPartialOpenLot(t)
+
+	committed, err := recorder.Record(session, testPaperLifecycleEvidenceRunInput("run-partial-open-lot"))
+	if err != nil {
+		t.Fatalf("Record returned error: %v", err)
+	}
+	if !committed {
+		t.Fatalf("Record committed = false, want true")
+	}
+
+	readback, err := recorder.ReadCumulative()
+	if err != nil {
+		t.Fatalf("ReadCumulative returned error: %v", err)
+	}
+	if readback.Summary.ClosedTradeCount != 2 {
+		t.Fatalf("closed trade count = %d, want 2", readback.Summary.ClosedTradeCount)
+	}
+	if readback.Summary.OpenTradeCount != 1 {
+		t.Fatalf("open trade count = %d, want 1 residual entry lot", readback.Summary.OpenTradeCount)
+	}
+	if len(readback.Summary.ReconciliationDrift) != 0 {
+		t.Fatalf("reconciliation drift = %#v, want none", readback.Summary.ReconciliationDrift)
+	}
+}
+
+func TestPaperLifecycleEvidenceRecorderCountsUnmatchedExitResidual(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cumulative-evidence.jsonl")
+	recorder := mustPaperLifecycleEvidenceRecorder(t, path, testPaperLifecycleEvidenceSource())
+	session := completedTestPaperLifecycleSessionWithUnmatchedExitResidual(t)
+
+	committed, err := recorder.Record(session, testPaperLifecycleEvidenceRunInput("run-unmatched-exit-residual"))
+	if err != nil {
+		t.Fatalf("Record returned error: %v", err)
+	}
+	if !committed {
+		t.Fatalf("Record committed = false, want true")
+	}
+
+	readback, err := recorder.ReadCumulative()
+	if err != nil {
+		t.Fatalf("ReadCumulative returned error: %v", err)
+	}
+	if readback.Summary.ClosedTradeCount != 1 {
+		t.Fatalf("closed trade count = %d, want 1", readback.Summary.ClosedTradeCount)
+	}
+	if readback.Summary.OpenTradeCount != 1 {
+		t.Fatalf("open trade count = %d, want 1 unmatched exit residual", readback.Summary.OpenTradeCount)
+	}
+	if len(readback.Summary.ReconciliationDrift) != 0 {
+		t.Fatalf("reconciliation drift = %#v, want none", readback.Summary.ReconciliationDrift)
+	}
 }
 
 func TestPaperLifecycleEvidenceRecorderReadbackIsOrderIndependent(t *testing.T) {
@@ -479,6 +539,77 @@ func mustRecordedRunJSONL(t *testing.T, record PaperLifecycleRecordedRun) []byte
 		t.Fatalf("marshalPaperLifecycleRecordedRunJSONLRecord returned error: %v", err)
 	}
 	return line
+}
+
+func completedTestPaperLifecycleSessionWithPartialOpenLot(t *testing.T) *PaperLifecycleSession {
+	t.Helper()
+
+	session := newTestPaperLifecycleSession(t)
+	start := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	fillSubmittedPaperLifecycleOrder(t, session, "full-open", types.SideTypeBuy, "0.05", "67820", start)
+	fillSubmittedPaperLifecycleOrder(t, session, "full-close", types.SideTypeSell, "0.04995", "67870", start.Add(time.Minute))
+	fillSubmittedPaperLifecycleOrder(t, session, "partial-open", types.SideTypeBuy, "0.05", "67830", start.Add(2*time.Minute))
+	fillSubmittedPaperLifecycleOrder(t, session, "partial-close", types.SideTypeSell, "0.02", "67880", start.Add(3*time.Minute))
+	return session
+}
+
+func completedTestPaperLifecycleSessionWithUnmatchedExitResidual(t *testing.T) *PaperLifecycleSession {
+	t.Helper()
+
+	start := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	session, err := NewPaperLifecycleSession(
+		context.Background(),
+		Config{Mode: ModeReplay},
+		newTestReplayMarketData(t),
+		WithPaperLifecycleBalances(types.BalanceMap{
+			"BTC":  {Currency: "BTC", Available: fixedpoint.MustNewFromString("0.01")},
+			"USDT": {Currency: "USDT", Available: fixedpoint.MustNewFromString("10000")},
+		}),
+		WithPaperLifecycleClock(func() time.Time {
+			return start
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewPaperLifecycleSession returned error: %v", err)
+	}
+
+	fillSubmittedPaperLifecycleOrder(t, session, "matched-entry", types.SideTypeBuy, "0.05", "67820", start)
+	fillSubmittedPaperLifecycleOrder(t, session, "unmatched-exit", types.SideTypeSell, "0.055", "67870", start.Add(time.Minute))
+	return session
+}
+
+func fillSubmittedPaperLifecycleOrder(t *testing.T, session *PaperLifecycleSession, clientOrderID string, side types.SideType, quantity string, price string, at time.Time) OrderAck {
+	t.Helper()
+
+	ack, err := session.SubmitOrder(context.Background(), paperLimitOrder(clientOrderID, side, quantity, price))
+	if err != nil {
+		t.Fatalf("SubmitOrder(%s) returned error: %v", clientOrderID, err)
+	}
+	fills, err := session.advanceKLine(paperLifecycleRecorderTestKLine(price, at), at.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("advanceKLine(%s) returned error: %v", clientOrderID, err)
+	}
+	if len(fills) != 1 {
+		t.Fatalf("advanceKLine(%s) fills = %#v, want one fill", clientOrderID, fills)
+	}
+	return ack
+}
+
+func paperLifecycleRecorderTestKLine(price string, start time.Time) types.KLine {
+	value := fixedpoint.MustNewFromString(price)
+	rangePadding := fixedpoint.MustNewFromString("10")
+	return types.KLine{
+		Exchange:  types.ExchangeName(CanonicalExchange),
+		Symbol:    "BTCUSDT",
+		StartTime: types.Time(start),
+		EndTime:   types.Time(start.Add(time.Minute)),
+		Interval:  types.Interval1m,
+		Open:      value,
+		Close:     value,
+		High:      value.Add(rangePadding),
+		Low:       value.Sub(rangePadding),
+		Closed:    true,
+	}
 }
 
 type partialPaperLifecycleEvidenceFileSink struct {

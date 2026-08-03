@@ -466,7 +466,11 @@ func aggregatePaperLifecycleRecordedRuns(records []PaperLifecycleRecordedRun) (P
 		summary.TradeCount += len(evidence.Trades)
 		summary.LedgerEntryCount += len(evidence.Ledger)
 		summary.ClosedTradeCount += len(evidence.ClosedTrades)
-		summary.OpenTradeCount += paperLifecycleEvidenceOpenTradeCount(evidence)
+		openTradeCount, err := paperLifecycleEvidenceOpenTradeCount(evidence)
+		if err != nil {
+			return PaperLifecycleCumulativeEvidenceSummary{}, err
+		}
+		summary.OpenTradeCount += openTradeCount
 
 		for _, trade := range evidence.Trades {
 			quoteCurrency := paperLifecycleEvidenceQuoteCurrency(evidence, trade.Symbol)
@@ -549,19 +553,69 @@ func aggregatePaperLifecycleRecordedRuns(records []PaperLifecycleRecordedRun) (P
 	return summary, nil
 }
 
-func paperLifecycleEvidenceOpenTradeCount(evidence PaperLifecycleEvidence) int {
-	closedOrderIDs := make(map[uint64]struct{}, len(evidence.ClosedTrades)*2)
-	for _, closed := range evidence.ClosedTrades {
-		closedOrderIDs[closed.EntryOrderID] = struct{}{}
-		closedOrderIDs[closed.ExitOrderID] = struct{}{}
-	}
-	open := 0
+// paperLifecycleEvidenceOpenTradeCount counts trade rows with nonzero unmatched base quantity
+// after closed-trade quantities are allocated back to their entry and exit order IDs.
+func paperLifecycleEvidenceOpenTradeCount(evidence PaperLifecycleEvidence) (int, error) {
+	residuals := make(map[uint64][]fixedpoint.Value)
 	for _, trade := range evidence.Trades {
-		if _, ok := closedOrderIDs[trade.OrderID]; !ok {
-			open++
+		quantity, err := paperEvidenceAmountValue("trade.net_base_change", trade.NetBaseChange)
+		if err != nil {
+			return 0, err
+		}
+		if quantity.Sign() < 0 {
+			quantity = quantity.Neg()
+		}
+		if quantity.Sign() > 0 {
+			residuals[trade.OrderID] = append(residuals[trade.OrderID], quantity)
 		}
 	}
-	return open
+
+	for _, closed := range evidence.ClosedTrades {
+		quantity, err := paperEvidenceAmountValue("closed_trade.quantity", closed.Quantity)
+		if err != nil {
+			return 0, err
+		}
+		if quantity.Sign() <= 0 {
+			return 0, fmt.Errorf("HTX paper lifecycle evidence recorder closed trade %d quantity must be positive", closed.ID)
+		}
+		if err := consumePaperLifecycleEvidenceOpenQuantity(residuals, closed.EntryOrderID, quantity); err != nil {
+			return 0, err
+		}
+		if err := consumePaperLifecycleEvidenceOpenQuantity(residuals, closed.ExitOrderID, quantity); err != nil {
+			return 0, err
+		}
+	}
+
+	open := 0
+	for _, lots := range residuals {
+		for _, quantity := range lots {
+			if quantity.Sign() > 0 {
+				open++
+			}
+		}
+	}
+	return open, nil
+}
+
+func consumePaperLifecycleEvidenceOpenQuantity(residuals map[uint64][]fixedpoint.Value, orderID uint64, quantity fixedpoint.Value) error {
+	lots := residuals[orderID]
+	for i := range lots {
+		if quantity.Sign() <= 0 {
+			return nil
+		}
+		if lots[i].Compare(quantity) <= 0 {
+			quantity = quantity.Sub(lots[i])
+			lots[i] = fixedpoint.Zero
+			continue
+		}
+		lots[i] = lots[i].Sub(quantity)
+		quantity = fixedpoint.Zero
+	}
+	residuals[orderID] = lots
+	if quantity.Sign() > 0 {
+		return fmt.Errorf("HTX paper lifecycle evidence recorder closed quantity exceeds trade residual for order %d", orderID)
+	}
+	return nil
 }
 
 func paperLifecycleEvidenceQuoteCurrency(evidence PaperLifecycleEvidence, symbol string) string {

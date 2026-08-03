@@ -140,7 +140,7 @@ Date: 2026-08-03 SGT
 
 The cumulative recorder slice adds `PaperLifecycleEvidenceRecorder`, which persists completed paper/replay run evidence with an explicit local replay source identity (`mode`, `source`, `dataset`) and per-run input (`source`, `dataset`, `run`). The retained `run_id` is a deterministic SHA-256 of the explicit run input, so restart retries for the same run are idempotent and cannot double count unless the retained evidence is manually corrupted, in which case readback fails closed.
 
-Readback recomputes aggregate turnover, raw total fees, entry/exit fee attribution, gross/net closed PnL, closed/open trade counts, and reconciliation drift from retained records. Records are accepted only when the recorder source identity, schema version, run identity, canonical JSONL byte form, and embedded `PaperLifecycleEvidence` validation all match.
+Readback recomputes aggregate turnover, raw total fees, entry/exit fee attribution, gross/net closed PnL, closed/open trade counts, and reconciliation drift from retained records. `open_trade_count` counts evidence trade rows with nonzero unmatched base quantity after each closed-trade quantity is allocated back to its entry and exit order IDs; buy rows use `net_base_change` so base-denominated fees are not counted as residual exposure. Records are accepted only when the recorder source identity, schema version, run identity, canonical JSONL byte form, and embedded `PaperLifecycleEvidence` validation all match.
 
 Boundaries:
 
