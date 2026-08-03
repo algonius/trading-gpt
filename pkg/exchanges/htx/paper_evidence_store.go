@@ -6,19 +6,31 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type PaperLifecycleEvidenceFileStore struct {
 	path string
+	lock *sync.Mutex
 }
 
+// PaperLifecycleEvidenceFileStore serializes append/read operations per canonical path within this process.
+// It does not provide cross-process file locking; callers running multiple processes need external serialization.
 func NewPaperLifecycleEvidenceFileStore(path string) (*PaperLifecycleEvidenceFileStore, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, fmt.Errorf("HTX paper lifecycle evidence file path is empty")
 	}
-	return &PaperLifecycleEvidenceFileStore{path: path}, nil
+	canonical, err := canonicalPaperLifecycleEvidenceFilePath(path)
+	if err != nil {
+		return nil, err
+	}
+	return &PaperLifecycleEvidenceFileStore{
+		path: canonical,
+		lock: paperLifecycleEvidenceFileStoreLock(canonical),
+	}, nil
 }
 
 func (s *PaperLifecycleEvidenceFileStore) Path() string {
@@ -33,7 +45,13 @@ func (s *PaperLifecycleEvidenceFileStore) Append(session *PaperLifecycleSession)
 		return false, fmt.Errorf("HTX paper lifecycle evidence file store is nil")
 	}
 
-	records, err := s.ReadAll()
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	return s.appendLocked(session)
+}
+
+func (s *PaperLifecycleEvidenceFileStore) appendLocked(session *PaperLifecycleSession) (bool, error) {
+	records, err := s.readAllLocked()
 	if err != nil {
 		return false, err
 	}
@@ -80,6 +98,12 @@ func (s *PaperLifecycleEvidenceFileStore) ReadAll() ([]PaperLifecycleEvidence, e
 		return nil, fmt.Errorf("HTX paper lifecycle evidence file store is nil")
 	}
 
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	return s.readAllLocked()
+}
+
+func (s *PaperLifecycleEvidenceFileStore) readAllLocked() ([]PaperLifecycleEvidence, error) {
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return []PaperLifecycleEvidence{}, nil
@@ -93,6 +117,29 @@ func (s *PaperLifecycleEvidenceFileStore) ReadAll() ([]PaperLifecycleEvidence, e
 		return nil, err
 	}
 	return ReadPaperLifecycleEvidenceJSONL(file)
+}
+
+var paperLifecycleEvidenceFileStoreLocks sync.Map
+
+func paperLifecycleEvidenceFileStoreLock(path string) *sync.Mutex {
+	lock, _ := paperLifecycleEvidenceFileStoreLocks.LoadOrStore(path, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func canonicalPaperLifecycleEvidenceFilePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	dir := filepath.Dir(abs)
+	base := filepath.Base(abs)
+	if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Join(resolvedDir, base), nil
+	}
+	return filepath.Clean(abs), nil
 }
 
 func validatePaperLifecycleEvidenceFileBoundary(file *os.File) error {
@@ -138,11 +185,16 @@ func (s *paperLifecycleEvidenceFileSink) Len() int {
 	return int(s.pos)
 }
 
-func (s *paperLifecycleEvidenceFileSink) Truncate(n int) {
+func (s *paperLifecycleEvidenceFileSink) Truncate(n int) error {
 	pos := int64(n)
-	_ = s.file.Truncate(pos)
-	_, _ = s.file.Seek(pos, io.SeekStart)
+	if err := s.file.Truncate(pos); err != nil {
+		return err
+	}
+	if _, err := s.file.Seek(pos, io.SeekStart); err != nil {
+		return err
+	}
 	s.pos = pos
+	return nil
 }
 
 func (s *paperLifecycleEvidenceFileSink) Write(p []byte) (int, error) {

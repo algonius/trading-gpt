@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -205,7 +206,7 @@ func MarshalPaperLifecycleEvidenceJSON(evidence PaperLifecycleEvidence) ([]byte,
 type PaperLifecycleEvidenceJSONLSink interface {
 	io.Writer
 	Len() int
-	Truncate(n int)
+	Truncate(n int) error
 }
 
 func AppendPaperLifecycleEvidenceJSONL(sink PaperLifecycleEvidenceJSONLSink, session *PaperLifecycleSession) error {
@@ -239,11 +240,15 @@ func appendPaperLifecycleEvidenceJSONLRecord(sink PaperLifecycleEvidenceJSONLSin
 	start := sink.Len()
 	n, err := sink.Write(line)
 	if err != nil {
-		sink.Truncate(start)
+		if rollbackErr := sink.Truncate(start); rollbackErr != nil {
+			return fmt.Errorf("HTX paper lifecycle evidence JSONL rollback failed: %w", errors.Join(err, rollbackErr))
+		}
 		return err
 	}
 	if n != len(line) {
-		sink.Truncate(start)
+		if rollbackErr := sink.Truncate(start); rollbackErr != nil {
+			return fmt.Errorf("HTX paper lifecycle evidence JSONL rollback failed: %w", errors.Join(io.ErrShortWrite, rollbackErr))
+		}
 		return io.ErrShortWrite
 	}
 	return nil

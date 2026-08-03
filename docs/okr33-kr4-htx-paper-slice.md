@@ -122,6 +122,7 @@ The next bounded retained-evidence slice adds a path-scoped `PaperLifecycleEvide
 Retained scope:
 
 - file-backed append and restart readback for JSONL evidence records;
+- complete read/deduplicate/append/sync serialization per canonical path inside one process;
 - exact-record duplicate retry handling so a restarted retry does not append the same deterministic record twice;
 - fail-closed readback for corrupt or truncated tails instead of silently skipping bad data;
 - preservation of already committed records when a later append fails before commit.
@@ -130,4 +131,5 @@ Remaining gaps:
 
 - this is storage/recovery infrastructure only and does not fabricate or claim cumulative KR5 PnL evidence;
 - evidence still covers the bounded replay fixture path and does not claim 100 closed trades;
+- the file store does not provide multi-process locking; multiple processes must use an external coordinator or separate files;
 - no private/authenticated account, live exchange, credential, funding, or factory wiring is introduced.

@@ -97,12 +97,12 @@ func TestPaperLifecycleEvidenceIsDeterministicAndCanonical(t *testing.T) {
 }
 
 func TestPaperLifecycleEvidenceJSONLAppendAndRead(t *testing.T) {
-	var buf bytes.Buffer
+	buf := &rollbackEvidenceSink{limit: -1}
 
-	if err := AppendPaperLifecycleEvidenceJSONL(&buf, completedTestPaperLifecycleSession(t)); err != nil {
+	if err := AppendPaperLifecycleEvidenceJSONL(buf, completedTestPaperLifecycleSession(t)); err != nil {
 		t.Fatalf("first AppendPaperLifecycleEvidenceJSONL returned error: %v", err)
 	}
-	if err := AppendPaperLifecycleEvidenceJSONL(&buf, completedTestPaperLifecycleSession(t)); err != nil {
+	if err := AppendPaperLifecycleEvidenceJSONL(buf, completedTestPaperLifecycleSession(t)); err != nil {
 		t.Fatalf("second AppendPaperLifecycleEvidenceJSONL returned error: %v", err)
 	}
 	if got := bytes.Count(buf.Bytes(), []byte("\n")); got != 2 {
@@ -122,10 +122,10 @@ func TestPaperLifecycleEvidenceJSONLAppendAndRead(t *testing.T) {
 }
 
 func TestPaperLifecycleEvidenceJSONLAppendAcceptsMaxReadableRecord(t *testing.T) {
-	var buf bytes.Buffer
+	buf := &rollbackEvidenceSink{limit: -1}
 	session := completedTestPaperLifecycleSessionWithJSONLRecordSize(t, MaxPaperLifecycleEvidenceJSONLRecordBytes)
 
-	if err := AppendPaperLifecycleEvidenceJSONL(&buf, session); err != nil {
+	if err := AppendPaperLifecycleEvidenceJSONL(buf, session); err != nil {
 		t.Fatalf("AppendPaperLifecycleEvidenceJSONL returned error: %v", err)
 	}
 	if buf.Len() != MaxPaperLifecycleEvidenceJSONLRecordBytes {
@@ -185,8 +185,8 @@ func TestPaperLifecycleEvidenceFailsClosed(t *testing.T) {
 
 func TestPaperLifecycleEvidenceAppendDoesNotMutateOnFailure(t *testing.T) {
 	t.Run("failed reconciliation", func(t *testing.T) {
-		var buf bytes.Buffer
-		if err := AppendPaperLifecycleEvidenceJSONL(&buf, completedTestPaperLifecycleSession(t)); err != nil {
+		buf := &rollbackEvidenceSink{limit: -1}
+		if err := AppendPaperLifecycleEvidenceJSONL(buf, completedTestPaperLifecycleSession(t)); err != nil {
 			t.Fatalf("initial append returned error: %v", err)
 		}
 		before := append([]byte(nil), buf.Bytes()...)
@@ -196,7 +196,7 @@ func TestPaperLifecycleEvidenceAppendDoesNotMutateOnFailure(t *testing.T) {
 		balance.Available = balance.Available.Add(fixedpoint.NewFromInt(1))
 		drifted.balances["USDT"] = balance
 
-		err := AppendPaperLifecycleEvidenceJSONL(&buf, drifted)
+		err := AppendPaperLifecycleEvidenceJSONL(buf, drifted)
 		if err == nil || !strings.Contains(err.Error(), "drift is non-zero") {
 			t.Fatalf("append error = %v, want drift failure", err)
 		}
@@ -263,6 +263,30 @@ func TestPaperLifecycleEvidenceAppendDoesNotMutateOnFailure(t *testing.T) {
 		}
 		if len(records) != 2 {
 			t.Fatalf("records after short-write retry = %d, want one preexisting plus one retried record", len(records))
+		}
+	})
+
+	t.Run("rollback failure is reported", func(t *testing.T) {
+		injectedWrite := errors.New("injected partial write failure")
+		injectedRollback := errors.New("injected rollback failure")
+		sink := &rollbackEvidenceSink{
+			limit:       19,
+			err:         injectedWrite,
+			truncateErr: injectedRollback,
+		}
+
+		err := AppendPaperLifecycleEvidenceJSONL(sink, completedTestPaperLifecycleSession(t))
+		if err == nil || !strings.Contains(err.Error(), "rollback failed") {
+			t.Fatalf("append error = %v, want observable rollback failure", err)
+		}
+		if !errors.Is(err, injectedWrite) {
+			t.Fatalf("append error = %v, want joined write failure", err)
+		}
+		if !errors.Is(err, injectedRollback) {
+			t.Fatalf("append error = %v, want joined rollback failure", err)
+		}
+		if sink.Len() != 19 {
+			t.Fatalf("sink length after failed rollback = %d, want retained partial bytes", sink.Len())
 		}
 	})
 
@@ -507,8 +531,9 @@ func mustMarshalPaperLifecycleEvidence(t *testing.T, evidence PaperLifecycleEvid
 
 type rollbackEvidenceSink struct {
 	bytes.Buffer
-	limit int
-	err   error
+	limit       int
+	err         error
+	truncateErr error
 }
 
 func (s *rollbackEvidenceSink) Write(p []byte) (int, error) {
@@ -523,4 +548,12 @@ func (s *rollbackEvidenceSink) Write(p []byte) (int, error) {
 		return n, s.err
 	}
 	return s.Buffer.Write(p)
+}
+
+func (s *rollbackEvidenceSink) Truncate(n int) error {
+	if s.truncateErr != nil {
+		return s.truncateErr
+	}
+	s.Buffer.Truncate(n)
+	return nil
 }
