@@ -133,3 +133,18 @@ Remaining gaps:
 - evidence still covers the bounded replay fixture path and does not claim 100 closed trades;
 - the file store does not provide multi-process locking; multiple processes must use an external coordinator or separate files;
 - no private/authenticated account, live exchange, credential, funding, or factory wiring is introduced.
+
+## Cumulative Evidence Recorder Follow-Up
+
+Date: 2026-08-03 SGT
+
+The cumulative recorder slice adds `PaperLifecycleEvidenceRecorder`, which persists completed paper/replay run evidence with an explicit local replay source identity (`mode`, `source`, `dataset`) and per-run input (`source`, `dataset`, `run`). The retained `run_id` is a deterministic SHA-256 of the explicit run input, so restart retries for the same run are idempotent and cannot double count unless the retained evidence is manually corrupted, in which case readback fails closed.
+
+Readback recomputes aggregate turnover, raw total fees, entry/exit fee attribution, gross/net closed PnL, closed/open trade counts, and reconciliation drift from retained records. Records are accepted only when the recorder source identity, schema version, run identity, canonical JSONL byte form, and embedded `PaperLifecycleEvidence` validation all match.
+
+Boundaries:
+
+- deterministic fixtures validate recorder/storage/recovery mechanics only;
+- fixture PnL is not daily, cumulative, live, or competition performance;
+- this slice does not satisfy or claim KR5's 100 closed trades;
+- the recorder inherits the file store's in-process per-path serialization and multi-process external-coordination requirement.
